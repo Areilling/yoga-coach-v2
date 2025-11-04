@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>🧘 智慧体育 · 瑜伽评估</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.12.0/dist/tf-core.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.12.0/dist/tf-converter.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.12.0/dist/tf-backend-webgl.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.0/dist/pose-detection.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: "PingFang SC", sans-serif;
+      background: #121212;
+      color: white;
+      overflow: hidden;
+      touch-action: none;
+    }
+    #video {
+      width: 100vw;
+      height: 100vh;
+      object-fit: cover;
+      transform: scaleX(-1);
+      display: none;
+    }
+    #overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      background: rgba(0,0,0,0.9);
+      z-index: 10;
+    }
+    #startBtn {
+      background: #4fc3f7;
+      color: white;
+      border: none;
+      padding: 16px 32px;
+      border-radius: 12px;
+      font-size: 20px;
+      cursor: pointer;
+      margin-top: 20px;
+      font-weight: bold;
+    }
+    .instructions {
+      position: absolute;
+      bottom: 20px;
+      text-align: center;
+      font-size: 14px;
+      color: #aaa;
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <video id="video" playsinline muted></video>
+  
+  <div id="overlay">
+    <div style="text-align: center; color: white; font-size: 24px; max-width: 80%;">
+      🧘 智慧体育 · 瑜伽体式评估<br>
+      <span style="font-size: 16px; color: #bbb; margin-top: 10px; display: block;">
+        请在光线充足处使用
+      </span>
+    </div>
+    <button id="startBtn">👉 点击开始摄像头</button>
+  </div>
+  <div class="instructions">微信扫码使用 · 数据仅在本地处理</div>
+
+  <script>
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const startBtn = document.getElementById('startBtn');
+
+    startBtn.addEventListener('click', async () => {
+      try {
+        overlay.innerHTML = '<div style="color:white;font-size:20px;">⏳ 正在启动摄像头...</div>';
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: 640, height: 480 },
+          audio: false
+        });
+        video.srcObject = stream;
+        video.style.display = 'block';
+        overlay.style.display = 'none';
+        await loadModel();
+      } catch (err) {
+        overlay.innerHTML = `<div style="color:#ff6b6b;font-size:18px;text-align:center;">
+          ❌ 摄像头被拒绝<br>
+          <button id="retryBtn" style="margin-top:15px;background:#ff6b6b;color:white;border:none;padding:10px 20px;border-radius:8px;">
+            重试
+          </button>
+        </div>`;
+        document.getElementById('retryBtn').onclick = () => location.reload();
+      }
+    });
+
+    async function loadModel() {
+      const status = document.createElement('div');
+      status.id = 'status';
+      status.style.cssText = 'position:absolute;top:20px;width:100%;text-align:center;color:#4fc3f7;font-size:18px;z-index:20;';
+      document.body.appendChild(status);
+      status.textContent = '⏳ 加载AI模型...';
+
+      await tf.setBackend('webgl');
+      const detector = await poseDetection.createDetector(
+        poseDetection.SupportedModels.BlazePose,
+        { runtime: 'tfjs', modelType: 'lite' }
+      );
+
+      status.textContent = '✅ 准备就绪！请做瑜伽...';
+
+      const feedback = document.createElement('div');
+      feedback.id = 'feedback';
+      feedback.style.cssText = 'position:absolute;top:60px;width:100%;text-align:center;color:white;font-size:20px;z-index:20;';
+      document.body.appendChild(feedback);
+
+      const detect = async () => {
+        const poses = await detector.estimatePoses(video);
+        if (poses.length > 0 && poses[0].keypoints) {
+          evaluatePose(poses[0].keypoints, feedback);
+        } else {
+          feedback.textContent = '未检测到人体';
+        }
+        requestAnimationFrame(detect);
+      };
+      detect();
+    }
+
+    function calculateAngle(a, b, c) {
+      if (!a || !b || !c) return 0;
+      const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+      let angle = Math.abs(radians * 180 / Math.PI);
+      return angle > 180 ? 360 - angle : angle;
+    }
+
+    function getPoint(keypoints, index) {
+      return keypoints[index] ? { x: keypoints[index].x, y: keypoints[index].y } : null;
+    }
+
+    function evaluatePose(keypoints, feedbackEl) {
+      const leftHip = getPoint(keypoints, 23);
+      const rightHip = getPoint(keypoints, 24);
+      const leftKnee = getPoint(keypoints, 25);
+      const rightKnee = getPoint(keypoints, 26);
+      const leftAnkle = getPoint(keypoints, 27);
+      const rightAnkle = getPoint(keypoints, 28);
+      const leftShoulder = getPoint(keypoints, 11);
+      const rightShoulder = getPoint(keypoints, 12);
+
+      if (!leftHip || !rightHip || !leftKnee || !rightKnee) return;
+
+      const leftKneeAngle = calculateAngle(leftHip, leftKnee, leftAnkle);
+      const rightKneeAngle = calculateAngle(rightHip, rightKnee, rightAnkle);
+
+      if ((leftKneeAngle < 120 && rightKneeAngle > 160) || (rightKneeAngle < 120 && leftKneeAngle > 160)) {
+        feedbackEl.innerHTML = '✅ 单腿平衡<br>✅ 骨盆稳定';
+        return;
+      }
+
+      if (leftShoulder && rightShoulder) {
+        const leftArmAngle = calculateAngle(getPoint(keypoints,15), leftShoulder, leftHip);
+        const rightArmAngle = calculateAngle(getPoint(keypoints,16), rightShoulder, rightHip);
+        if (leftArmAngle > 120 && rightArmAngle > 120) {
+          feedbackEl.innerHTML = '✅ 手臂伸展<br>✅ 脊柱延展';
+          return;
+        }
+      }
+
+      feedbackEl.textContent = '请尝试树式或下犬式';
+    }
+  </script>
+</body>
+</html>
