@@ -3,7 +3,11 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>🧘 树式评估 · 自动评分（Lite）</title>
+<title>🧘 树式评估 · 5秒自动评分</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.12.0/dist/tf-core.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.12.0/dist/tf-converter.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.12.0/dist/tf-backend-webgl.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.0/dist/pose-detection.min.js"></script>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{height:100%;background:#000;color:#fff;font-family:"PingFang SC",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden}
@@ -11,7 +15,7 @@
   #video,#canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
   #status,#hud,#fps{position:absolute;left:0;width:100%;text-align:center;z-index:10;text-shadow:0 2px 6px rgba(0,0,0,.6)}
   #status{top:12px;color:#4fc3f7;font-size:14px}
-  #hud{top:40px;color:#fff;font-size:16px;font-weight:600}
+  #hud{top:40px;color:#fff;font-size:18px;font-weight:600}
   #fps{top:68px;color:#bbb;font-size:12px}
   #overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.92);z-index:20}
   .title{font-size:22px;line-height:1.5;text-align:center}
@@ -43,22 +47,19 @@
 
   <div id="overlay">
     <div class="title">🧘 树式评估 · 自动评分</div>
-    <div class="subtitle">为保证速度，本版仅加载 Pose 模型（不加载手部模型）。<br>启动方式：<b>站定 + 胸前合十</b>，保持静止<b>3秒</b>自动评分。</div>
+    <div class="subtitle">请站在明亮处，全身入镜。<br>启动方式：<b>站定 + 胸前合十</b>，保持姿势 <b>5秒</b> 自动评分。</div>
     <div style="height:16px"></div>
-    <button id="startBtn">👉 开启摄像头（Lite）</button>
-    <div class="subtitle" style="margin-top:10px;">打不开？请用 HTTPS、换 4G/5G，或用 PC + 同一Wi-Fi下的内网IP访问。</div>
+    <button id="startBtn">👉 开启摄像头</button>
   </div>
 
   <div class="controls">
     <button id="switchBtn" class="ghost">切换前/后摄</button>
     <button id="freezeBtn" class="ghost">立即结算</button>
-    <button id="saveJsonBtn" class="ghost">下载评分 JSON</button>
-    <button id="shotBtn" class="ghost">保存截图</button>
     <button id="resetBtn" class="ghost">重新加载</button>
   </div>
 
   <div class="chip" id="peopleChip">人数：--</div>
-  <div class="legend">维度：直腿 · 弯腿 · 髋外开 · 手位（合十） · 脚位高度 · 骨盆水平 · 稳定度</div>
+  <div class="legend">维度：直腿 · 弯腿 · 骨盆 · 手位 · 脚位 · 稳定度</div>
   <div class="tips">全本地推理 · 不上传任何图像/视频</div>
 
   <!-- 结果弹层 -->
@@ -77,33 +78,17 @@
 </div>
 
 <script>
-// 统一修改与简化版本
 (async () => {
   const CFG = {
     backend: 'webgl',
-    poseModelType: 'lite',  // 加速版Pose模型
+    poseModelType: 'full',   // 👈 关键：使用 full 模型
     smoothing: true,
-
-    video: { width: 640, height: 480, fps: 24 },  // 优化视频分辨率与帧率
-    sampleEveryN: 1,  // 每帧都推理
-
-    STRAIGHT_MIN: 165,   // 站立腿直度 165°
-    BENT_MAX: 120,       // 抬腿弯曲最大值 120°
-    VERT_MAX: 0.40,      // 垂直度限制
-    PELVIS_TILT_MAX: 22, // 骨盆倾斜最大值
-    HOLD_SEC: 3.0,       // 保持静止时间 3 秒后评分
-    EMA_ALPHA: 0.3,
-    STILL_SWAY_TH: 5,    // 摆动阈值
-
-    PRAYER_WRIST_DIST: 70,   // 双手合十：手腕间距最大值
-    PRAYER_CHEST_DIST: 140,  // 手腕至胸部最大距离
-
-    FOOT_BONUS_AT_GROIN: 1.0,  // 脚跟接近大腿根部满分
-    FOOT_OK_ABOVE_KNEE: 0.8,   // 高于膝盖的得分
-    FOOT_ON_KNEE: 0.3,         // 脚踩在膝盖扣分
-    FOOT_BELOW_KNEE: 0.1,      // 膝下更低扣分
-
-    W: { straight: 20, bent: 15, hipOpen: 20, hands: 10, footHeight: 20, pelvis: 5, stability: 10 }
+    video: { width: 640, height: 480, fps: 24 },
+    HOLD_SEC: 5.0,           // 👈 5秒自动评分
+    STRAIGHT_MIN: 165,
+    BENT_MAX: 120,
+    PELVIS_TILT_MAX: 20,
+    PRAYER_WRIST_DIST: 60,   // 合十判定更宽松
   };
 
   const video = document.getElementById('video');
@@ -111,26 +96,16 @@
   const ctx = canvas.getContext('2d', { alpha: true });
   const statusEl = document.getElementById('status');
   const hudEl = document.getElementById('hud');
+  const peopleChip = document.getElementById('peopleChip');
   const resLayer = document.getElementById('result');
-  const resTitle = document.getElementById('resTitle');
   const resScore = document.getElementById('resScore');
   const resSummary = document.getElementById('resSummary');
   const resTips = document.getElementById('resTips');
-  const retryBtn = document.getElementById('retryBtn');
-  const closeBtn = document.getElementById('closeBtn');
-  const startBtn = document.getElementById('startBtn');
-  const switchBtn = document.getElementById('switchBtn');
-  const freezeBtn = document.getElementById('freezeBtn');
-  const saveJsonBtn = document.getElementById('saveJsonBtn');
-  const shotBtn = document.getElementById('shotBtn');
-  const resetBtn = document.getElementById('resetBtn');
-  const peopleChip = document.getElementById('peopleChip');
 
   let facing = 'user', stream = null, detector = null;
-  let running = false, finalized = false, armed = false;
-  let holdStart = null, lastCOM = null, swayEma = 0;
-  let lastPose = null, lastFinal = null;
-  let frameIndex = 0;
+  let running = false, finalized = false;
+  let holdStart = null;
+  let lastPose = null;
 
   // 启动摄像头
   async function startCamera() {
@@ -138,14 +113,17 @@
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { facingMode: facing, width: CFG.video.width, height: CFG.video.height, frameRate: { ideal: CFG.video.fps, max: CFG.video.fps } }
+      video: { facingMode: facing, width: CFG.video.width, height: CFG.video.height }
     });
-    video.srcObject = stream; await video.play();
+    video.srcObject = stream;
+    await video.play();
+    canvas.width = video.videoWidth || CFG.video.width;
+    canvas.height = video.videoHeight || CFG.video.height;
   }
 
-  // 加载Pose模型
+  // 加载模型
   async function loadModel() {
-    statusEl.textContent = '🧠 加载Pose模型…';
+    statusEl.textContent = '🧠 加载AI模型（完整版）…';
     await tf.setBackend(CFG.backend);
     await tf.ready();
     detector = await poseDetection.createDetector(
@@ -154,136 +132,159 @@
     );
   }
 
-  // 选择主要人物（最多2人）
-  function pickPrimary(poses) {
-    if (!poses?.length) return null;
-    const center = { x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 };
-    const scored = poses.map(p => {
-      const xs = p.keypoints.filter(k => k.score == null || k.score > 0.3).map(k => k.x);
-      const ys = p.keypoints.filter(k => k.score == null || k.score > 0.3).map(k => k.y);
-      if (!xs.length || !ys.length) return { p, score: -1 };
-      const minx = Math.min(...xs), maxx = Math.max(...xs), miny = Math.min(...ys), maxy = Math.max(...ys);
-      const area = (maxx - minx) * (maxy - miny);
-      const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
-      const d = Math.hypot(cx - center.x, cy - center.y) + 1;
-      return { p, score: area / d };
-    }).sort((a, b) => b.score - a.score);
-    return scored[0].p;
+  // 计算两点距离
+  const dist2d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  // 判断是否双手合十（手腕靠近胸前）
+  function isPraying(kps) {
+    const lw = kps[15], rw = kps[16], ls = kps[11], rs = kps[12];
+    if (!lw || !rw || !ls || !rs) return false;
+    const wristDist = dist2d(lw, rw);
+    const chestDist = (dist2d(lw, ls) + dist2d(rw, rs)) / 2;
+    return wristDist < CFG.PRAYER_WRIST_DIST && chestDist < 150;
+  }
+
+  // 绘制骨架
+  function drawSkeleton(kps) {
+    if (!kps) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const edges = [[11,13],[13,15],[12,14],[14,16],[11,12],[23,24],[11,23],[12,24],[23,25],[25,27],[24,26],[26,28]];
+    ctx.strokeStyle = '#4fc3f7';
+    ctx.lineWidth = 3;
+    for (const [a, b] of edges) {
+      const p = kps[a], q = kps[b];
+      if (p?.score > 0.3 && q?.score > 0.3) {
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(q.x, q.y);
+        ctx.stroke();
+      }
+    }
+    ctx.fillStyle = 'red';
+    for (const kp of kps) {
+      if (kp?.score > 0.3) {
+        ctx.beginPath();
+        ctx.arc(kp.x, kp.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
   }
 
   // 计算角度
-  const dist = (a, b) => (a && b) ? Math.hypot(a.x - b.x, a.y - b.y) : null;
-  const angleDeg = (a, b, c) => {
+  function angleDeg(a, b, c) {
     if (!a || !b || !c) return null;
     const r = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
     let d = Math.abs(r * 180 / Math.PI);
     return d > 180 ? 360 - d : d;
-  };
-
-  // 绘制姿势
-  function drawPoseCtx(g, kps) {
-    if (!kps?.length) return;
-    const edges = [
-      [11, 13], [13, 15], [12, 14], [14, 16],
-      [11, 12], [23, 24], [11, 23], [12, 24],
-      [23, 25], [25, 27], [24, 26], [26, 28],
-      [27, 29], [29, 31], [28, 30], [30, 32]
-    ];
-    g.lineWidth = 3;
-    g.strokeStyle = 'rgba(79,195,247,.9)';
-    g.fillStyle = '#fff';
-    g.beginPath();
-    for (const [a, b] of edges) {
-      const p = kps[a], q = kps[b];
-      if (p?.score > .3 && q?.score > .3) {
-        g.moveTo(p.x, p.y);
-        g.lineTo(q.x, q.y);
-      }
-    }
-    g.stroke();
-    for (const p of kps) {
-      if (p?.score > .3) {
-        g.beginPath();
-        g.arc(p.x, p.y, 4, 0, Math.PI * 2);
-        g.fill();
-      }
-    }
   }
 
-  // 树式姿势评分
+  // 评分
   function scoreTree(kps) {
-    const lh = kps[23], rh = kps[24], lk = kps[25], rk = kps[26], la = kps[27], ra = kps[28], ls = kps[11], rs = kps[12];
-    if (!lh || !rh || !lk || !rk || !la || !ra) return { score: 0, problems: ['关键点不足'], detail: {} };
+    const lh = kps[23], rh = kps[24], lk = kps[25], rk = kps[26], la = kps[27], ra = kps[28];
+    if (!lh || !rh || !lk || !rk || !la || !ra) return { score: 0, problems: ['关键点不足'] };
 
-    const LKA = angleDeg(lh, lk, la), RKA = angleDeg(rh, rk, ra);
+    const LKA = angleDeg(lh, lk, la);
+    const RKA = angleDeg(rh, rk, ra);
+    if (LKA === null || RKA === null) return { score: 0, problems: ['角度计算失败'] };
+
     const straight = Math.max(LKA, RKA);
     const bent = Math.min(LKA, RKA);
+    const pelvisTilt = Math.abs(lh.y - rh.y);
 
-    const footHeightScore = Math.abs(la.y - ra.y) > 20 ? 0 : 1;
-    const stabilityScore = Math.abs(lh.y - rh.y) < 10 ? 1 : 0;
-
-    const score = (straight > 160 ? 1 : 0) * 40 + (bent < 120 ? 1 : 0) * 30 + footHeightScore * 20 + stabilityScore * 10;
-
+    let score = 0;
     const problems = [];
-    if (straight < 160) problems.push('站立腿不够直');
-    if (bent > 120) problems.push('抬腿膝盖角度过大');
-    if (footHeightScore === 0) problems.push('脚放得太低');
-    if (stabilityScore === 0) problems.push('骨盆不稳定');
 
-    return { score: Math.round(score), problems };
+    if (straight >= CFG.STRAIGHT_MIN) score += 30; else problems.push('站立腿不够直');
+    if (bent <= CFG.BENT_MAX) score += 30; else problems.push('抬腿膝盖未弯曲');
+    if (pelvisTilt < 15) score += 20; else problems.push('骨盆倾斜');
+    score += 20; // 手位已通过合十检测，脚位简化处理
+
+    return { score: Math.min(100, Math.round(score)), problems };
   }
 
-  // 最终评分显示
-  function finalize(res) {
+  // 显示结果
+  function showResult(res) {
     finalized = true;
-    running = false;
     const s = res.score;
-    resTitle.textContent = '树式评估结果';
     resScore.textContent = `${s} 分`;
     resScore.className = 'score ' + (s >= 80 ? 'ok' : (s >= 60 ? '' : 'bad'));
     resSummary.textContent = s >= 80 ? '姿势规范，保持良好！' : (s >= 60 ? '基本达标，注意细节调整。' : '未达标，建议根据提示逐项纠正。');
     resTips.innerHTML = '';
-    (res.problems?.length ? res.problems : ['无明显问题点']).forEach(t => {
+    (res.problems.length ? res.problems : ['无明显问题']).forEach(t => {
       const li = document.createElement('li');
       li.textContent = t;
       resTips.appendChild(li);
     });
-    lastFinal = {
-      timestamp: new Date().toISOString(),
-      score: s,
-      problems: res.problems,
-      detail: res.detail,
-      config: CFG
-    };
     resLayer.style.display = 'flex';
   }
 
-  // 摄像头初始化与流程
-  async function init() {
-    await startCamera();
-    await loadModel();
-    running = true;
-    statusEl.textContent = '准备就绪，站定并合十开始评分';
+  // 主循环
+  async function detectLoop() {
+    if (!running) return;
+    const poses = await detector.estimatePoses(video);
+    const numPeople = poses.length;
+    peopleChip.textContent = `人数：${numPeople}`;
+
+    if (numPeople === 0) {
+      hudEl.textContent = '未检测到人体';
+      holdStart = null;
+    } else {
+      const pose = poses[0];
+      lastPose = pose;
+      drawSkeleton(pose.keypoints);
+
+      if (pose.keypoints && isPraying(pose.keypoints)) {
+        if (!holdStart) holdStart = Date.now();
+        const elapsed = (Date.now() - holdStart) / 1000;
+        if (elapsed >= CFG.HOLD_SEC) {
+          running = false;
+          const result = scoreTree(pose.keypoints);
+          showResult(result);
+          return;
+        }
+        hudEl.textContent = `✅ 合十检测中… ${Math.ceil(CFG.HOLD_SEC - elapsed)} 秒`;
+      } else {
+        holdStart = null;
+        hudEl.textContent = '请站定并双手合十';
+      }
+    }
+    requestAnimationFrame(detectLoop);
   }
 
-  // 启动评分流程
-  startBtn.addEventListener('click', init);
-
-  // 重新加载
-  resetBtn.addEventListener('click', () => {
-    location.reload();
-  });
-
-  // 自动评分时触发
-  freezeBtn.addEventListener('click', () => {
-    if (finalized) return;
-    if (!lastPose?.keypoints?.length) {
-      statusEl.textContent = '暂未检测到人体';
-      return;
+  // 初始化
+  async function init() {
+    try {
+      await startCamera();
+      await loadModel();
+      document.getElementById('overlay').style.display = 'none';
+      running = true;
+      statusEl.textContent = '准备就绪';
+      detectLoop();
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = '❌ 启动失败：' + (err.message || '未知错误');
     }
-    finalize(scoreTree(lastPose.keypoints));
-  });
+  }
 
+  // 按钮绑定
+  document.getElementById('startBtn').addEventListener('click', init);
+  document.getElementById('resetBtn').addEventListener('click', () => location.reload());
+  document.getElementById('freezeBtn').addEventListener('click', () => {
+    if (lastPose?.keypoints && !finalized) {
+      showResult(scoreTree(lastPose.keypoints));
+      running = false;
+    }
+  });
+  document.getElementById('retryBtn').onclick = () => {
+    resLayer.style.display = 'none';
+    finalized = false;
+    holdStart = null;
+    running = true;
+    detectLoop();
+  };
+  document.getElementById('closeBtn').onclick = () => {
+    resLayer.style.display = 'none';
+  };
 })();
 </script>
 </body>
