@@ -16,7 +16,6 @@
     #hud { position: absolute; top: 40px; width: 100%; text-align: center; font-size: 18px; font-weight: bold; }
     #overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.9); z-index: 10; }
     button { background: #4fc3f7; color: white; border: none; padding: 14px 28px; border-radius: 12px; font-size: 16px; margin-top: 20px; cursor: pointer; box-shadow: 0 4px 12px rgba(79,195,247,0.2); }
-    .btn-ghost { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); }
     #result { display: none; position: absolute; inset: 0; background: rgba(0,0,0,0.8); justify-content: center; align-items: center; z-index: 20; }
     .card { background: rgba(30,30,35,0.95); padding: 20px; border-radius: 16px; text-align: center; max-width: 90%; width: 300px; }
     .score { font-size: 40px; margin: 10px 0; }
@@ -64,7 +63,7 @@
       let holdStart = null;
       let lastKeypoints = null;
 
-      // 启动摄像头
+      // 启动摄像头 —— 关键修复点
       async function startCamera() {
         try {
           statusEl.textContent = '📷 请求摄像头…';
@@ -75,15 +74,19 @@
 
           video.srcObject = stream;
 
-          video.onloadedmetadata = () => {
+          // ✅ 使用 canplay 事件（更可靠）
+          const onCanPlay = () => {
             canvas.width = video.videoWidth || 640;
             canvas.height = video.videoHeight || 480;
             statusEl.textContent = '🧠 加载AI模型…';
             loadModel();
+            video.removeEventListener('canplay', onCanPlay); // 防止重复触发
           };
+          video.addEventListener('canplay', onCanPlay);
 
+          // ✅ 强制播放，即使被阻止也不中断流程
           video.play().catch(err => {
-            console.warn('play() 被阻止，但不影响流程');
+            console.warn('play() 被浏览器阻止，但继续执行');
           });
         } catch (err) {
           console.error('摄像头失败:', err);
@@ -146,7 +149,7 @@
         }
       }
 
-      // ✅ 树式专用评分逻辑
+      // ✅ 树式专用评分逻辑（支持骨盆倾斜、膝盖微屈等）
       function evaluate(kps) {
         const leftHip = kps[23], rightHip = kps[24];
         const leftKnee = kps[25], rightKnee = kps[26];
@@ -156,7 +159,7 @@
         let score = 0;
         const feedback = [];
 
-        // 1. 支撑腿（假设为左腿）是否微屈（170°~178°）
+        // 1. 支撑腿（左腿）是否微屈（170°~178°）
         const supportLegAngle = angle(leftHip, leftKnee, leftAnkle);
         if (supportLegAngle && supportLegAngle > 170 && supportLegAngle < 178) {
           score += 25;
@@ -182,7 +185,7 @@
           feedback.push("骨盆倾斜");
         }
 
-        // 4. 上身是否垂直（肩与髋对齐）
+        // 4. 上身是否垂直（肩中点与髋中点对齐）
         const shoulderMidX = (leftShoulder.x + rightShoulder.x) / 2;
         const hipMidX = (leftHip.x + rightHip.x) / 2;
         const torsoOffset = Math.abs(shoulderMidX - hipMidX);
