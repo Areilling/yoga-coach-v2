@@ -3,190 +3,357 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>🧘 智慧体育 · 瑜伽评估</title>
+  <title>🧘 智慧体育 · 瑜伽评估（树式强化版）</title>
+  <!-- TFJS & Pose Detection -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.12.0/dist/tf-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.12.0/dist/tf-converter.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.12.0/dist/tf-backend-webgl.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.0/dist/pose-detection.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: "PingFang SC", sans-serif;
-      background: #000;
-      color: white;
-      overflow: hidden;
-      touch-action: none;
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; color: #fff; font-family: "PingFang SC", system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    .stage { position: relative; width: 100vw; height: 100vh; }
+    #video, #canvas {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; transform: scaleX(-1); /* 前置摄像头镜像，绘制层保持一致 */
     }
-    #video {
-      width: 100vw;
-      height: 100vh;
-      object-fit: cover;
-      transform: scaleX(-1);
-      display: block;
+    #status, #feedback, #fps {
+      position: absolute; left: 0; width: 100%; text-align: center; z-index: 20; pointer-events: none;
+      text-shadow: 0 2px 6px rgba(0,0,0,.6);
     }
+    #status { top: 16px; color: #4fc3f7; font-size: 16px; }
+    #feedback { top: 52px; color: #fff; font-size: 18px; font-weight: 600; }
+    #fps { top: 84px; color: #bbb; font-size: 13px; }
     #overlay {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      background: rgba(0,0,0,0.95);
-      z-index: 10;
+      position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(0,0,0,.92); z-index: 30;
     }
-    #startBtn {
-      background: #4fc3f7;
-      color: white;
-      border: none;
-      padding: 16px 32px;
-      border-radius: 12px;
-      font-size: 20px;
-      cursor: pointer;
-      margin-top: 20px;
-      font-weight: bold;
+    .title { text-align: center; color: #fff; font-size: 24px; line-height: 1.5; }
+    .subtitle { font-size: 14px; color: #bbb; margin-top: 8px; text-align: center; }
+    .controls {
+      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 10px; z-index: 25;
     }
-    .instructions {
-      position: absolute;
-      bottom: 20px;
-      text-align: center;
-      font-size: 14px;
-      color: #aaa;
-      width: 100%;
+    button {
+      background: #4fc3f7; color: #fff; border: none; padding: 12px 16px; border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer;
+      box-shadow: 0 6px 18px rgba(79,195,247,.25);
     }
-    #status, #feedback {
-      position: absolute;
-      width: 100%;
-      text-align: center;
-      z-index: 20;
-      font-size: 18px;
+    button.alt { background: #2ecc71; }
+    button.ghost { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); }
+    .tips { position: absolute; bottom: 8px; width: 100%; text-align: center; color: #aaa; font-size: 12px; }
+    .legend {
+      position: absolute; right: 12px; bottom: 60px; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.1);
+      border-radius: 10px; padding: 8px 10px; font-size: 12px; color: #ddd; z-index: 24;
     }
-    #status { top: 20px; color: #4fc3f7; }
-    #feedback { top: 60px; color: white; }
   </style>
 </head>
 <body>
-  <video id="video" playsinline muted></video>
-  <div id="status">⏳ 加载中...</div>
-  <div id="feedback"></div>
-  
-  <div id="overlay">
-    <div style="text-align: center; color: white; font-size: 24px; max-width: 80%;">
-      🧘 智慧体育 · 瑜伽评估<br>
-      <span style="font-size: 16px; color: #bbb; margin-top: 10px; display: block;">
-        请在光线充足处使用
-      </span>
+  <div class="stage">
+    <video id="video" playsinline muted></video>
+    <canvas id="canvas"></canvas>
+    <div id="status">⏳ 加载中...</div>
+    <div id="feedback"></div>
+    <div id="fps"></div>
+
+    <div id="overlay">
+      <div class="title">🧘 智慧体育 · 瑜伽评估<br/>（树式 · 实时姿态）</div>
+      <div class="subtitle">请在光线充足处，保持全身入镜；优先使用 HTTPS 域名访问。</div>
+      <div style="height:16px"></div>
+      <button id="startBtn">👉 点击开启摄像头</button>
+      <div class="subtitle" style="margin-top:10px;">若无法开启，请在浏览器允许“摄像头权限”，或关闭其它占用摄像头的 App。</div>
     </div>
-    <button id="startBtn">👉 点击开始摄像头</button>
+
+    <div class="controls">
+      <button id="switchBtn" class="ghost">切换前/后摄</button>
+      <button id="resetBtn" class="ghost">重置</button>
+    </div>
+
+    <div class="legend">判定要素：膝角（弯/直）· 髋踝垂直度 · 抬脚高度（离地）</div>
+    <div class="tips">微信扫码可用 · 全本地推理 · 不上传任何视频/图像</div>
   </div>
-  <div class="instructions">微信扫码使用 · 数据仅在本地处理</div>
 
-  <script>
-    const video = document.getElementById('video');
-    const overlay = document.getElementById('overlay');
-    const startBtn = document.getElementById('startBtn');
-    const statusEl = document.getElementById('status');
-    const feedbackEl = document.getElementById('feedback');
+<script>
+(async () => {
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d', { alpha: true });
+  const overlay = document.getElementById('overlay');
+  const startBtn = document.getElementById('startBtn');
+  const switchBtn = document.getElementById('switchBtn');
+  const resetBtn  = document.getElementById('resetBtn');
+  const statusEl = document.getElementById('status');
+  const feedbackEl = document.getElementById('feedback');
+  const fpsEl = document.getElementById('fps');
 
-    startBtn.addEventListener('click', async () => {
-      try {
-        statusEl.textContent = '📷 请求摄像头...';
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: 640, height: 480 },
-          audio: false
-        });
-        video.srcObject = stream;
-        overlay.style.display = 'none';
-        await video.play();
+  let facing = 'user'; // 'user' 前置；'environment' 后置
+  let stream = null;
+  let detector = null;
+  let running = false;
 
-        statusEl.textContent = '🧠 加载AI模型（完整版）...';
-        await tf.setBackend('webgl');
-        
-        // 👇 关键修改：使用 full 模型，确保关键点输出
-        const detector = await poseDetection.createDetector(
-          poseDetection.SupportedModels.BlazePose,
-          { 
-            runtime: 'tfjs',
-            modelType: 'full',   // ← 改为 full
-            enableSmoothing: true
-          }
-        );
+  // —— 自适应 Canvas 像素比
+  function fitCanvas() {
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const w = canvas.clientWidth || canvas.parentElement.clientWidth;
+    const h = canvas.clientHeight || canvas.parentElement.clientHeight;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.scale(dpr, dpr);
+    // 与视频镜像保持一致
+    ctx.translate(canvas.clientWidth, 0);
+    ctx.scale(-1, 1);
+  }
+  const ro = new ResizeObserver(fitCanvas);
+  ro.observe(canvas);
 
-        statusEl.textContent = '✅ 准备就绪！请做瑜伽...';
-        feedbackEl.textContent = '';
-
-        const detect = async () => {
-          try {
-            const poses = await detector.estimatePoses(video);
-            
-            if (poses.length === 0) {
-              feedbackEl.textContent = '未检测到人体，请对准镜头';
-              requestAnimationFrame(detect);
-              return;
-            }
-
-            const pose = poses[0];
-            // 🔍 关键：检查是否有 keypoints
-            if (!pose.keypoints || pose.keypoints.length === 0) {
-              feedbackEl.textContent = '⚠️ 检测中...请保持静止';
-              requestAnimationFrame(detect);
-              return;
-            }
-
-            // ✅ 有关键点，进行评估
-            evaluatePose(pose.keypoints, feedbackEl);
-            requestAnimationFrame(detect);
-          } catch (e) {
-            console.error(e);
-            feedbackEl.textContent = '❌ 检测异常，请重试';
-          }
-        };
-        detect();
-      } catch (err) {
-        console.error(err);
-        statusEl.textContent = '❌ 启动失败';
-        feedbackEl.innerHTML = `<button onclick="location.reload()" style="background:#ff6b6b;color:white;border:none;padding:10px 20px;border-radius:8px;">重试</button>`;
+  async function startCamera() {
+    statusEl.textContent = '📷 请求摄像头...';
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    const constraints = {
+      audio: false,
+      video: {
+        facingMode: facing,
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30, max: 30 }
       }
-    });
+    };
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+    video.srcObject = stream;
+    await video.play();
+  }
 
-    function calculateAngle(a, b, c) {
-      if (!a || !b || !c) return 0;
-      const radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-      let angle = Math.abs(radians * 180 / Math.PI);
-      return angle > 180 ? 360 - angle : angle;
+  async function loadModel() {
+    statusEl.textContent = '🧠 加载 AI 模型...';
+    await tf.setBackend('webgl');
+    await tf.ready();
+    // 预热：有助于第一次检测更快
+    tf.engine().startScope();
+    tf.tidy(() => tf.zeros([1, 224, 224, 3]));
+    tf.engine().endScope();
+
+    detector = await poseDetection.createDetector(
+      poseDetection.SupportedModels.BlazePose,
+      {
+        runtime: 'tfjs',
+        modelType: 'full',        // full 关键点更齐全
+        enableSmoothing: true
+      }
+    );
+  }
+
+  // —— 工具函数
+  function getPoint(kps, i, th=0.3) {
+    const kp = kps[i];
+    return (kp && (kp.score ?? kp.score > th)) ? { x: kp.x, y: kp.y, s: kp.score ?? 1 } : null;
+  }
+  function angleDeg(a, b, c) { // 夹角 ABC
+    if (!a || !b || !c) return null;
+    const r = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let d = Math.abs(r * 180 / Math.PI);
+    return (d > 180) ? (360 - d) : d;
+  }
+  function dist(a, b) {
+    if (!a || !b) return null;
+    const dx = a.x - b.x, dy = a.y - b.y;
+    return Math.hypot(dx, dy);
+  }
+  function vertness(a, b) { // 垂直度（0 完美垂直；越大越偏）
+    if (!a || !b) return null;
+    const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y) + 1e-6;
+    return dx / dy;
+  }
+  // 指标平滑（指数滑动平均）
+  const smooth = (() => {
+    const mem = new Map();
+    return (key, val, alpha=0.25) => {
+      if (val == null) return null;
+      const last = mem.get(key);
+      const now = (last == null) ? val : (alpha*val + (1-alpha)*last);
+      mem.set(key, now);
+      return now;
+    };
+  })();
+
+  // —— 绘制
+  function drawPose(kps) {
+    ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);
+    if (!kps?.length) return;
+    // 画骨架连接（使用常见连线）
+    const edges = [
+      [11,13],[13,15], [12,14],[14,16],
+      [11,12], [23,24],
+      [11,23],[12,24],
+      [23,25],[25,27], [24,26],[26,28],
+      [27,29],[29,31], [28,30],[30,32]
+    ];
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(79,195,247,.9)';
+    ctx.fillStyle = '#fff';
+
+    // 线
+    ctx.beginPath();
+    for (const [a,b] of edges) {
+      const p = kps[a], q = kps[b];
+      if (p?.score > .3 && q?.score > .3) {
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(q.x, q.y);
+      }
+    }
+    ctx.stroke();
+
+    // 点
+    for (const p of kps) {
+      if (p?.score > .3) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+  }
+
+  // —— 树式判定（鲁棒版）
+  function evaluateTreePose(kps) {
+    const L_HIP=23, R_HIP=24, L_KNEE=25, R_KNEE=26, L_ANK=27, R_ANK=28;
+    const leftHip  = getPoint(kps, L_HIP), rightHip = getPoint(kps, R_HIP);
+    const leftKnee = getPoint(kps, L_KNEE), rightKnee= getPoint(kps, R_KNEE);
+    const leftAnk  = getPoint(kps, L_ANK),  rightAnk = getPoint(kps, R_ANK);
+
+    if (!leftHip || !rightHip || !leftKnee || !rightKnee) {
+      return { ok:false, msg:'请保持全身入镜（含髋/膝/踝）' };
     }
 
-    function getPoint(keypoints, index) {
-      const kp = keypoints[index];
-      return kp && kp.score > 0.3 ? { x: kp.x, y: kp.y } : null;
+    const lk = angleDeg(leftHip, leftKnee, leftAnk);
+    const rk = angleDeg(rightHip, rightKnee, rightAnk);
+
+    // 膝角阈值
+    const STRAIGHT = 160, BENT = 120;
+
+    // 髋-踝垂直度（站立腿要足够垂直）
+    const vertLeft  = vertness(leftHip, leftAnk);
+    const vertRight = vertness(rightHip, rightAnk);
+    // 离地：抬起脚的踝相对站立脚的高度差（y 越小越高；画面坐标 y 向下）
+    const footDeltaY = leftAnk && rightAnk ? Math.abs(leftAnk.y - rightAnk.y) : null;
+
+    // 平滑
+    const lkS = smooth('lk', lk), rkS = smooth('rk', rk);
+    const vLS = smooth('vL', vertLeft), vRS = smooth('vR', vertRight);
+    const fdS = smooth('fd', footDeltaY);
+
+    // 判定两种情况（左站/右站）
+    const leftStand =
+      (lkS !== null && rkS !== null && lkS > STRAIGHT && rkS < BENT) &&
+      (vLS !== null && vLS < 0.25); // 垂直度越小越好
+
+    const rightStand =
+      (lkS !== null && rkS !== null && rkS > STRAIGHT && lkS < BENT) &&
+      (vRS !== null && vRS < 0.25);
+
+    // 额外提示：脚跟高度（离地）
+    let footCue = '';
+    if (fdS !== null && fdS < 18) { // 像素阈值，随分辨率大致可用
+      footCue = '· 抬起脚更高一些';
     }
 
-    function evaluatePose(keypoints, feedbackEl) {
-      const leftHip = getPoint(keypoints, 23);
-      const rightHip = getPoint(keypoints, 24);
-      const leftKnee = getPoint(keypoints, 25);
-      const rightKnee = getPoint(keypoints, 26);
-      const leftAnkle = getPoint(keypoints, 27);
-      const rightAnkle = getPoint(keypoints, 28);
-
-      if (!leftHip || !rightHip || !leftKnee || !rightKnee) {
-        feedbackEl.textContent = '请保持全身可见';
-        return;
-      }
-
-      const leftKneeAngle = calculateAngle(leftHip, leftKnee, leftAnkle);
-      const rightKneeAngle = calculateAngle(rightHip, rightKnee, rightAnkle);
-
-      // 树式：一条腿弯曲（<120°），另一条伸直（>160°）
-      if ((leftKneeAngle < 120 && rightKneeAngle > 160) || (rightKneeAngle < 120 && leftKneeAngle > 160)) {
-        feedbackEl.innerHTML = '✅ 单腿平衡<br>✅ 骨盆稳定';
-        return;
-      }
-
-      feedbackEl.textContent = '请尝试树式（单腿站立）';
+    if (leftStand || rightStand) {
+      return { ok:true, msg:`✅ 单腿平衡稳定 ${footCue}`.trim() };
     }
-  </script>
+    // 细化反馈
+    const tips = [];
+    if (lkS !== null && rkS !== null) {
+      if (lkS <= STRAIGHT && rkS <= STRAIGHT) tips.push('弯曲一侧膝盖');
+      if (lkS >= BENT && rkS >= BENT) tips.push('保持一侧膝盖伸直');
+    }
+    if ((vLS !== null && vLS >= 0.25) || (vRS !== null && vRS >= 0.25)) {
+      tips.push('站立腿保持垂直（髋-踝连线更竖直）');
+    }
+    if (fdS !== null && fdS < 18) tips.push('抬起脚更高一些');
+
+    return { ok:false, msg: tips.length ? ('请尝试树式：' + tips.join(' · ')) : '请尝试树式（单腿站立）' };
+  }
+
+  // —— 检测循环
+  let lastTS = performance.now(), frameCnt = 0, lastFPS = 0;
+  const SKIP = 0; // 可改为 1/2 做抽帧
+  let skipCnt = 0;
+
+  async function loop() {
+    if (!running) return;
+    try {
+      if (skipCnt < SKIP) { skipCnt++; requestAnimationFrame(loop); return; }
+      skipCnt = 0;
+
+      const t0 = performance.now();
+      const poses = await detector.estimatePoses(video, { flipHorizontal: false });
+      const pose = poses?.[0];
+      if (!pose?.keypoints?.length) {
+        feedbackEl.textContent = '未检测到人体，请对准镜头并保持全身入镜';
+        drawPose([]);
+      } else {
+        drawPose(pose.keypoints);
+        const res = evaluateTreePose(pose.keypoints);
+        feedbackEl.textContent = res.msg || '';
+      }
+
+      // FPS
+      frameCnt++;
+      const now = performance.now();
+      if (now - lastTS >= 1000) {
+        lastFPS = frameCnt; frameCnt = 0; lastTS = now;
+      }
+      const size = video.videoWidth + '×' + video.videoHeight;
+      fpsEl.textContent = `FPS: ${lastFPS} · 分辨率 ${size}`;
+
+      // 动态提示
+      statusEl.textContent = '✅ 正在评估…';
+    } catch (e) {
+      console.error(e);
+      feedbackEl.textContent = '❌ 检测异常，点击“重置”再试';
+      statusEl.textContent = '❌ 出错';
+    }
+    requestAnimationFrame(loop);
+  }
+
+  // —— 事件
+  startBtn.addEventListener('click', async () => {
+    try {
+      await startCamera();
+      overlay.style.display = 'none';
+      fitCanvas();
+      await loadModel();
+      running = true;
+      statusEl.textContent = '✅ 准备就绪！请做树式…';
+      loop();
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = '❌ 启动失败';
+      feedbackEl.innerHTML = `<button onclick="location.reload()" style="background:#ff6b6b;color:white;border:none;padding:10px 20px;border-radius:10px;">重试</button>`;
+      overlay.style.display = '';
+    }
+  });
+
+  switchBtn.addEventListener('click', async () => {
+    facing = (facing === 'user') ? 'environment' : 'user';
+    try {
+      await startCamera();
+    } catch (e) {
+      console.error(e);
+      feedbackEl.textContent = '切换失败：请检查摄像头权限';
+    }
+  });
+
+  resetBtn.addEventListener('click', () => {
+    location.reload();
+  });
+
+  // 权限检测友好提示
+  if (!('mediaDevices' in navigator) || !('getUserMedia' in navigator.mediaDevices)) {
+    statusEl.textContent = '❌ 当前浏览器不支持摄像头调用';
+    startBtn.disabled = true;
+  } else {
+    statusEl.textContent = '⏳ 就绪中…';
+  }
+})();
+</script>
 </body>
 </html>
