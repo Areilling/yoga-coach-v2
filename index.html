@@ -322,7 +322,7 @@ async function loadScripts(){
     drawPoseCtx(g, lastPose?.keypoints||[]);
     g.setTransform(1,0,0,1,0,0); g.fillStyle='rgba(0,0,0,.5)'; g.fillRect(10,10,320,26);
     g.fillStyle='#fff'; g.font='14px system-ui,sans-serif'; g.fillText(`Tree Pose · ${new Date().toLocaleString()}`,18,29);
-    off.toBlob(b=>download(`tree_pose_${new Date().toISOString().replace(/[:.]/g,'-')}.png`,b),'image/png');
+    off.toBlob(b=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=`tree_pose_${new Date().toISOString().replace(/[:.]/g,'-')}.png`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),800); },'image/png');
   }
 
   async function loop(){
