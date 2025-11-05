@@ -1,321 +1,254 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>🧘 树式评估 · 10秒自动评分</title>
-<!-- 依赖：TFJS + pose-detection（BlazePose） -->
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>树式评估 · 自动评分（新版标准）</title>
+
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.12.0/dist/tf-core.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.12.0/dist/tf-converter.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.12.0/dist/tf-backend-webgl.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.0/dist/pose-detection.min.js"></script>
+
 <style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  html,body{height:100%;background:#000;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;overflow:hidden}
-  #video,#canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
-  #status{position:absolute;top:12px;left:0;width:100%;text-align:center;color:#4fc3f7;font-size:14px;text-shadow:0 2px 8px rgba(0,0,0,.5)}
-  #hud{position:absolute;top:42px;left:0;width:100%;text-align:center;font-size:16px;font-weight:700}
-  #overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.92);z-index:10}
-  .title{font-size:22px}
-  .sub{margin-top:8px;font-size:14px;color:#bbb;text-align:center}
-  button{background:#4fc3f7;color:#fff;border:none;padding:12px 20px;border-radius:12px;font-weight:700;font-size:15px;cursor:pointer;box-shadow:0 10px 24px rgba(79,195,247,.25);margin-top:16px}
-  .ghost{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18)}
-  #result{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.65);z-index:20;backdrop-filter:blur(2px)}
-  .card{width:min(92vw,520px);background:rgba(22,22,26,.96);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:18px}
-  .card h3{margin:0 0 8px 0}
-  .score{font-size:44px;font-weight:900;margin:4px 0 10px}
-  .ok{color:#2ecc71}.bad{color:#ff6b6b}
-  ul{margin:10px 0 0 18px;font-size:14px;color:#ddd}
-  .row{display:flex;gap:10px;margin-top:14px}
-  .row>button{flex:1}
-  .chip{position:absolute;left:12px;bottom:16px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:6px 10px;font-size:12px}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body, html { height: 100%; background: #000; color: white; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+#video, #canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+#status { position: absolute; top: 12px; width: 100%; text-align: center; color: #4fc3f7; font-size: 14px; text-shadow: 0 1px 3px rgba(0,0,0,0.6); }
+#hud { position: absolute; top: 40px; width: 100%; text-align: center; font-size: 18px; font-weight: bold; }
+#overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.9); z-index: 10; }
+button { background: #4fc3f7; color: white; border: none; padding: 14px 28px; border-radius: 12px; font-size: 16px; margin-top: 20px; cursor: pointer; box-shadow: 0 4px 12px rgba(79,195,247,0.2); }
+.btn-ghost { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); }
+#result { display: none; position: absolute; inset: 0; background: rgba(0,0,0,0.8); justify-content: center; align-items: center; z-index: 20; }
+.card { background: rgba(30,30,35,0.95); padding: 20px; border-radius: 16px; text-align: center; max-width: 90%; width: 300px; }
+.score { font-size: 40px; margin: 10px 0; }
 </style>
 </head>
+
 <body>
 <video id="video" playsinline muted></video>
 <canvas id="canvas"></canvas>
-<div id="status">⏳ 初始化…</div>
+<div id="status">⏳ 正在初始化…</div>
 <div id="hud"></div>
-
 <div id="overlay">
-  <div class="title">🧘 树式评估 · 10秒自动评分</div>
-  <div class="sub">站定后 <b>胸前合十</b> → 保持 <b>10秒</b> 自动出分（不需要点任何按钮）。</div>
+  <div style="font-size:22px;">🧘 树式评估 · 自动评分</div>
+  <div style="margin-top:8px; font-size:14px; color:#bbb;">
+    请站定，双手合十于胸前。<br> 保持姿势 <b>5秒</b> 自动评分。
+  </div>
   <button id="startBtn">👉 开启摄像头</button>
-  <div class="sub">温馨提示：尽量全身入镜，光线充足，脚踝不要出画。</div>
 </div>
 
 <div id="result">
   <div class="card">
-    <h3>树式评估结果（合格线：60）</h3>
+    <div>树式评估结果</div>
     <div class="score" id="scoreEl">--</div>
-    <div id="summaryEl" style="color:#ccc;font-size:14px"></div>
-    <ul id="tipsEl"></ul>
-    <div class="row">
-      <button id="retryBtn" class="ghost">↺ 重新测一次</button>
-      <button id="closeBtn">完成</button>
-    </div>
+    <div id="summaryEl"></div>
+    <button id="againBtn" style="margin-top:16px; width:100%">再测一次</button>
   </div>
 </div>
 
-<div class="chip" id="stateChip">等待开始</div>
-
 <script>
 (async () => {
-  // ========= 配置 =========
-  const CFG = {
-    backend: 'webgl',
-    modelType: 'lite',       // 速度优先
-    width: 640, height: 480, fps: 24,
-    holdSeconds: 10,         // 必须≥10秒
-    stillSwayTh: 5,          // 髋心摆动阈值（像素）
-    maxFootMove: 12,         // 支撑脚位移阈值（像素）
-    prayerWristMax: 70,      // 两腕距离（合十）
-    prayerChestMax: 140,     // 腕-胸中心距离
-    straightMin: 165,        // 支撑膝角
-    bentMax: 120,            // 抬腿膝角
-    shinHitDist: 40,         // 抬脚踝到支撑胫骨的距离（“贴小腿”）
-  };
-
-  // ========= DOM =========
   const video = document.getElementById('video');
   const canvas = document.getElementById('canvas');
-  const ctx = canvas.getContext('2d', { alpha:true });
-  const overlay = document.getElementById('overlay');
+  const ctx = canvas.getContext('2d');
   const statusEl = document.getElementById('status');
   const hudEl = document.getElementById('hud');
-  const stateChip = document.getElementById('stateChip');
   const startBtn = document.getElementById('startBtn');
-  const resLayer = document.getElementById('result');
+  const resultDiv = document.getElementById('result');
   const scoreEl = document.getElementById('scoreEl');
   const summaryEl = document.getElementById('summaryEl');
-  const tipsEl = document.getElementById('tipsEl');
-  const retryBtn = document.getElementById('retryBtn');
-  const closeBtn = document.getElementById('closeBtn');
+  const againBtn = document.getElementById('againBtn');
+  let detector = null;
+  let running = false;
+  let holdStart = null;
+  let lastKeypoints = null;
 
-  // ========= 状态 =========
-  let detector=null, running=false, armed=false, finalized=false;
-  let holdStart=null, lastPose=null;
-  let hipPrev=null, swayEma=0;
-  let standFootStart=null; // 支撑脚初始位置
-  let standLeft=true;      // 哪条腿为支撑腿
-
-  // ========= 工具 =========
-  const dist = (a,b)=> (a&&b)?Math.hypot(a.x-b.x,a.y-b.y):Infinity;
-  const angle = (a,b,c)=>{ if(!a||!b||!c) return null;
-    const ab=Math.hypot(a.x-b.x,a.y-b.y), bc=Math.hypot(b.x-c.x,b.y-c.y), ac=Math.hypot(a.x-c.x,a.y-c.y);
-    if(!ab||!bc) return null;
-    const cos=(ab*ab+bc*bc-ac*ac)/(2*ab*bc);
-    const rad=Math.acos(Math.max(-1,Math.min(1,cos)));
-    let deg=rad*180/Math.PI; if(deg>180) deg=360-deg; return deg;
-  };
-  const emaGen=a=>{let v=null;return x=>(v==null? (v=x) : v=a*x+(1-a)*v, v)}; const ema=emaGen(0.3);
-
-  function drawPose(kps){
-    if(!kps?.length) return;
-    const edges=[[11,13],[13,15],[12,14],[14,16],[11,12],[23,24],[11,23],[12,24],[23,25],[25,27],[24,26],[26,28]];
-    ctx.lineWidth=3; ctx.strokeStyle='rgba(79,195,247,.9)'; ctx.fillStyle='#fff';
-    ctx.beginPath();
-    for(const [a,b] of edges){ const p=kps[a],q=kps[b]; if(p?.score>.3&&q?.score>.3){ ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); } }
-    ctx.stroke();
-    for(const p of kps){ if(p?.score>.3){ ctx.beginPath(); ctx.arc(p.x,p.y,4,0,Math.PI*2); ctx.fill(); } }
-  }
-
-  function fullBodyIn(kps){
-    const head = kps[0] || kps[3] || kps[4];
-    const ankL = kps[27], ankR = kps[28];
-    return (head?.score>0.2) && (ankL?.score>0.2) && (ankR?.score>0.2);
-  }
-
-  function isPrayer(kps){
-    const ls=kps[11], rs=kps[12], lw=kps[15], rw=kps[16];
-    if(!(ls&&rs&&lw&&rw)) return false;
-    const chest={x:(ls.x+rs.x)/2, y:(ls.y+rs.y)/2};
-    return dist(lw,rw)<=CFG.prayerWristMax &&
-           dist(lw,chest)<=CFG.prayerChestMax &&
-           dist(rw,chest)<=CFG.prayerChestMax;
-  }
-
-  function selectStandLeg(kps){
-    const lh=kps[23], rh=kps[24], lk=kps[25], rk=kps[26], la=kps[27], ra=kps[28];
-    const LKA=angle(lh,lk,la), RKA=angle(rh,rk,ra);
-    // 谁更直/更垂直就当支撑腿
-    const vL=Math.abs(lh.x-la.x)/(Math.abs(lh.y-la.y)+1e-6);
-    const vR=Math.abs(rh.x-ra.x)/(Math.abs(rh.y-ra.y)+1e-6);
-    const leftScore=(LKA||0)-(vL*50), rightScore=(RKA||0)-(vR*50);
-    return (leftScore>=rightScore);
-  }
-
-  function pointLineDist(p,a,b){ if(!p||!a||!b) return Infinity;
-    const A=p.x-a.x, B=p.y-a.y, C=b.x-a.x, D=b.y-a.y;
-    const dot=A*C+B*D, len=C*C+D*D; const t=Math.max(0,Math.min(1,dot/(len||1)));
-    const x=a.x + t*C, y=a.y + t*D; return Math.hypot(p.x-x,p.y-y);
-  }
-
-  // ========= 维度评分（0~10） =========
-  function scoreSupportLeg(kps, standLeft, stillOK, footMovePx){
-    const h=standLeft? kps[23]:kps[24];
-    const k=standLeft? kps[25]:kps[26];
-    const a=standLeft? kps[27]:kps[28];
-    const kneeAngle=angle(h,k,a)||0;
-    const straightScore = Math.max(0, Math.min(10, (kneeAngle - CFG.straightMin) / (180-CFG.straightMin) * 10));
-    const stableScore = stillOK && footMovePx<=CFG.maxFootMove ? 10 : Math.max(0, 10 - (footMovePx-CFG.maxFootMove)*0.5);
-    return Math.round((straightScore*0.6 + stableScore*0.4)*10)/10;
-  }
-
-  function scoreLiftAndAttach(kps, standLeft){
-    const hipS=standLeft? kps[23]:kps[24];
-    const kneeS=standLeft? kps[25]:kps[26];
-    const ankS =standLeft? kps[27]:kps[28];
-    const hipL=!standLeft? kps[23]:kps[24];
-    const kneeL=!standLeft? kps[25]:kps[26];
-    const ankL =!standLeft? kps[27]:kps[28];
-    if(!(hipS&&kneeS&&ankS&&hipL&&kneeL&&ankL)) return 0;
-
-    const bend = angle(hipL,kneeL,ankL)||180;
-    const bendScore = Math.max(0, Math.min(10, (CFG.bentMax - bend) / CFG.bentMax * 10)); // 越小越好
-
-    // “贴小腿”：抬脚踝到支撑胫骨直线的距离小，且 y 介于支撑膝和踝之间
-    const dToShin = pointLineDist(ankL, kneeS, ankS);
-    const between = (ankL.y >= Math.min(kneeS.y, ankS.y)-12) && (ankL.y <= Math.max(kneeS.y, ankS.y)+12);
-    const notGround = Math.abs(ankL.y - ankS.y) < (Math.abs(kneeS.y - ankS.y)*1.1); // 不低于地面太多
-    let attachScore = 0;
-    if(between && notGround){
-      attachScore = Math.max(0, Math.min(10, (CFG.shinHitDist - dToShin) / CFG.shinHitDist * 10));
-    }
-    // 综合：弯膝 60%，贴合 40%
-    return Math.round((bendScore*0.6 + attachScore*0.4)*10)/10;
-  }
-
-  function scoreHands(kps){
-    const ls=kps[11], rs=kps[12], lw=kps[15], rw=kps[16];
-    if(!(ls&&rs&&lw&&rw)) return 0;
-    const chest={x:(ls.x+rs.x)/2, y:(ls.y+rs.y)/2};
-    const wristsClose = Math.max(0, Math.min(1, (CFG.prayerWristMax - dist(lw,rw)) / CFG.prayerWristMax));
-    const wristsNearC = Math.max(0, Math.min(1, (CFG.prayerChestMax - Math.min(dist(lw,chest),dist(rw,chest))) / CFG.prayerChestMax));
-    return Math.round((wristsClose*0.6 + wristsNearC*0.4)*10*10)/10; // 0~10
-  }
-
-  function scoreBalanceCompleteness(kps, holdSec, footMovePx){
-    if(!fullBodyIn(kps)) return 0;
-    const holdScore = Math.max(0, Math.min(10, holdSec/CFG.holdSeconds*10));
-    const footStable = footMovePx<=CFG.maxFootMove ? 10 : Math.max(0, 10-(footMovePx-CFG.maxFootMove)*0.5);
-    return Math.round((holdScore*0.7 + footStable*0.3)*10)/10;
-  }
-
-  // ========= 打分汇总（百分制） =========
-  function summarizeScores(support, liftAttach, hands, balance){
-    const total10 = support*0.30 + liftAttach*0.30 + hands*0.20 + balance*0.20; // 0~10
-    return Math.round(total10*10); // 百分制
-  }
-
-  // ========= 主循环 =========
-  async function loop(){
-    if(!running || finalized) return;
-    try{
-      const poses = await detector.estimatePoses(video, {flipHorizontal:false});
-      const pose = poses?.[0]; // 单人
-      ctx.clearRect(0,0,canvas.width,canvas.height);
-
-      if(!pose?.keypoints?.length){
-        hudEl.textContent='未检测到人体';
-        holdStart=null; armed=false; standFootStart=null; hipPrev=null; swayEma=0;
-        requestAnimationFrame(loop); return;
-      }
-      const kps = pose.keypoints;
-      lastPose = pose;
-      drawPose(kps);
-
-      // 选择支撑腿
-      standLeft = selectStandLeg(kps);
-
-      // 髋心与摆动
-      const lh=kps[23], rh=kps[24];
-      const hipMid = (lh&&rh)? {x:(lh.x+rh.x)/2, y:(lh.y+rh.y)/2} : null;
-      if(hipMid && hipPrev){ const move=Math.hypot(hipMid.x-hipPrev.x, hipMid.y-hipPrev.y); swayEma = ema(move); }
-      hipPrev=hipMid;
-      const stillOK = (swayEma||0) < CFG.stillSwayTh;
-
-      // 支撑脚位移
-      const standAnk = standLeft? kps[27]:kps[28];
-      if(!standFootStart && standAnk) standFootStart = {x:standAnk.x, y:standAnk.y};
-      const footMovePx = standAnk && standFootStart ? Math.hypot(standAnk.x-standFootStart.x, standAnk.y-standFootStart.y) : 0;
-
-      // 启动条件：合十 + 全身入镜 + 基本静止
-      if(!armed){
-        stateChip.textContent = '等待：站定并胸前合十';
-        if(isPrayer(kps) && fullBodyIn(kps) && stillOK){
-          armed=true; holdStart=performance.now(); stateChip.textContent='已启动：保持 10 秒…';
-        }
-      }else{
-        const holdSec = (performance.now() - holdStart)/1000;
-        hudEl.textContent = `⏱ 正在计时：${Math.min(CFG.holdSeconds, holdSec).toFixed(1)} / ${CFG.holdSeconds}s`;
-        stateChip.textContent = '保持不动…如中断将重新计时';
-        // 若中断：合十消失/大幅移动/人出框 → 重新计时
-        if(!isPrayer(kps) || !fullBodyIn(kps) || !stillOK){
-          armed=false; holdStart=null; standFootStart=null; stateChip.textContent='计时中断，重新站定合十';
-        }else if(holdSec>=CFG.holdSeconds){
-          // 逐维打分
-          const s1 = scoreSupportLeg(kps, standLeft, stillOK, footMovePx);
-          const s2 = scoreLiftAndAttach(kps, standLeft);
-          const s3 = scoreHands(kps);
-          const s4 = scoreBalanceCompleteness(kps, holdSec, footMovePx);
-          const total = summarizeScores(s1,s2,s3,s4);
-
-          // 专业提示
-          const tips=[];
-          if(s1<8) tips.push('支撑腿：膝盖收紧上提，确保大腿前侧有张力；避免支撑脚挪动。');
-          if(s2<8) tips.push('抬腿与贴合：抬膝向外、脚心贴在支撑腿“小腿内侧”，避免踩膝盖或落地。');
-          if(s3<8) tips.push('手位：掌心对掌心，腕部靠近胸中心，肩颈放松下沉。');
-          if(s4<8) tips.push('平衡与完整度：视线平视一点，核心收紧，保持稳定满 10 秒。');
-
-          // 展示
-          finalized=true; running=false;
-          scoreEl.textContent = total + ' 分';
-          scoreEl.className = 'score ' + (total>=85?'ok':(total>=60?'':'bad'));
-          summaryEl.textContent = total>=85 ? '姿势规范，综合表现优良。' : (total>=60 ? '基本达标，建议根据提示微调。' : '未达标，请按提示逐项纠正后再试。');
-          tipsEl.innerHTML=''; tips.forEach(t=>{ const li=document.createElement('li'); li.textContent=t; tipsEl.appendChild(li); });
-          resLayer.style.display='flex';
-        }
-      }
-    }catch(e){
-      statusEl.textContent='⚠️ 检测异常，请重试';
-    }
-    requestAnimationFrame(loop);
-  }
-
-  // ========= 初始化 =========
-  async function init(){
-    try{
-      statusEl.textContent='📷 请求摄像头…';
+  // 启动摄像头
+  async function startCamera() {
+    try {
+      statusEl.textContent = '📷 请求摄像头…';
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio:false, video:{facingMode:'user', width:CFG.width, height:CFG.height, frameRate:{ideal:CFG.fps,max:CFG.fps}}
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
       });
       video.srcObject = stream;
-      await video.play();
-      canvas.width = video.videoWidth||CFG.width;
-      canvas.height = video.videoHeight||CFG.height;
-
-      statusEl.textContent='🧠 加载模型…';
-      await tf.setBackend(CFG.backend); await tf.ready();
-      detector = await poseDetection.createDetector(
-        poseDetection.SupportedModels.BlazePose,
-        { runtime:'tfjs', modelType:CFG.modelType, enableSmoothing:true }
-      );
-
-      overlay.style.display='none';
-      statusEl.textContent='准备就绪：站定 + 胸前合十开始';
-      running=true; finalized=false; armed=false; holdStart=null; swayEma=0; hipPrev=null; standFootStart=null;
-      // 画布坐标系镜像
-      ctx.setTransform(1,0,0,1,0,0); ctx.translate(canvas.width,0); ctx.scale(-1,1);
-      loop();
-    }catch(e){
-      statusEl.textContent='❌ 摄像头/模型加载失败，请检查权限/网络';
+      video.onloadedmetadata = () => {
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
+        statusEl.textContent = '🧠 加载AI模型…';
+        loadModel();
+      };
+      video.play().catch(err => { console.warn('play() 被阻止'); });
+    } catch (err) {
+      console.error('摄像头失败:', err);
+      statusEl.textContent = '❌ 摄像头访问失败';
+      alert('无法访问摄像头，请检查权限设置');
     }
   }
 
-  startBtn.addEventListener('click', init);
-  retryBtn.addEventListener('click', ()=>{ resLayer.style.display='none'; finalized=false; armed=false; holdStart=null; swayEma=0; hipPrev=null; standFootStart=null; running=true; loop(); });
-  closeBtn.addEventListener('click', ()=>{ resLayer.style.display='none'; });
+  // 加载模型
+  async function loadModel() {
+    try {
+      await tf.setBackend('webgl');
+      await tf.ready();
+      detector = await poseDetection.createDetector(poseDetection.SupportedModels.BlazePose, {
+        runtime: 'tfjs', modelType: 'full', enableSmoothing: true, enableTracking: true
+      });
+      document.getElementById('overlay').style.display = 'none';
+      running = true;
+      statusEl.textContent = '准备就绪';
+      detectLoop();
+    } catch (err) {
+      console.error('模型加载失败:', err);
+      statusEl.textContent = '❌ AI模型加载失败';
+      alert('AI模型加载失败，请刷新重试');
+    }
+  }
+
+  // 辅助函数
+  const dist = (a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+  const angle=(a,b,c)=>{
+    if(!a||!b||!c)return null;
+    const ab=Math.hypot(a.x-b.x,a.y-b.y);
+    const bc=Math.hypot(b.x-c.x,b.y-c.y);
+    const ac=Math.hypot(a.x-c.x,a.y-c.y);
+    if(ab===0||bc===0)return null;
+    const cosB=(ab*ab+bc*bc-ac*ac)/(2*ab*bc);
+    return Math.acos(Math.max(-1,Math.min(1,cosB)))*180/Math.PI;
+  };
+  function getKP(kps,i,conf=0.3){const kp=kps[i];return (kp&&kp.score>=conf)?kp:null;}
+  function inFrame(kps,w=canvas.width,h=canvas.height){
+    const need=[0,23,24,27,28];
+    for(const idx of need){const p=getKP(kps,idx);if(!p||p.x<0||p.y<0||p.x>w||p.y>h)return false;}
+    return true;
+  }
+  function pointSegDist(p,a,b){if(!p||!a||!b)return Infinity;const vx=b.x-a.x,vy=b.y-a.y;const wx=p.x-a.x,wy=p.y-a.y;
+    const c1=vx*wx+vy*wy;const c2=vx*vx+vy*vy||1e-6;let t=c1/c2;t=Math.max(0,Math.min(1,t));
+    const px=a.x+t*vx,py=a.y+t*vy;return Math.hypot(p.x-px,p.y-py);}
+  function kneeAngleLeftRight(kps){return{L:angle(getKP(kps,23),getKP(kps,25),getKP(kps,27)),R:angle(getKP(kps,24),getKP(kps,26),getKP(kps,28))};}
+  function wristDistance(kps){const lw=getKP(kps,15),rw=getKP(kps,16);return(lw&&rw)?Math.hypot(lw.x-rw.x,lw.y-rw.y):Infinity;}
+
+  // 绘制关键点
+  function drawPoints(kps){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle='red';
+    for(const kp of kps){if(kp.score>0.3){ctx.beginPath();ctx.arc(kp.x,kp.y,4,0,Math.PI*2);ctx.fill();}}
+  }
+
+  // === 新版 四维度评分 evaluate(kps) ===
+  function evaluate(kps){
+    const {L:LKA,R:RKA}=kneeAngleLeftRight(kps);
+    if(LKA==null||RKA==null)return{score:0,msg:'关键点不足'};
+    const lank=getKP(kps,27),rank=getKP(kps,28);
+    let support=(LKA>=RKA)?'L':'R';
+    if(LKA>=165&&RKA>=165&&lank&&rank){support=(lank.y>rank.y)?'L':'R';}
+    const supKnee=(support==='L')?getKP(kps,25):getKP(kps,26);
+    const supAnk=(support==='L')?lank:rank;
+    const supHip=(support==='L')?getKP(kps,23):getKP(kps,24);
+    const supAngle=(support==='L')?LKA:RKA;
+
+    let s_support=0;
+    if(supAngle>=170)s_support=10;
+    else if(supAngle>=160)s_support=8+(supAngle-160)/10*2;
+    else if(supAngle>=150)s_support=6+(supAngle-150)/10*2;
+    else s_support=Math.max(0,(supAngle-120)/30*6);
+    if(lastKeypoints&&supAnk){
+      const prev=(support==='L')?lastKeypoints[27]:lastKeypoints[28];
+      if(prev&&prev.score>=0.3){
+        const drift=Math.hypot(supAnk.x-prev.x,supAnk.y-prev.y);
+        if(drift>6){
+          const pen=Math.min(4,(drift-6)/9*2+Math.max(0,drift-15)/10*2);
+          s_support=Math.max(0,s_support-pen);
+        }
+      }
+    }
+
+    const raise=(support==='L')?'R':'L';
+    const rAnk=(raise==='L')?lank:rank;
+    const rKnee=(raise==='L')?getKP(kps,25):getKP(kps,26);
+    const supKneePt=supKnee,supAnkPt=supAnk;
+    let s_raise=0;
+    if(rAnk&&rKnee&&supKneePt&&supAnkPt){
+      const offGround=(rAnk.y<supAnkPt.y-40);
+      const distToCalf=pointSegDist(rAnk,supKneePt,supAnkPt);
+      const closeToCalf=distToCalf<50;
+      if(offGround&&closeToCalf)s_raise=10;
+      else if(offGround||closeToCalf)s_raise=7.5;
+      else s_raise=4;
+      const hipOpp=(raise==='L')?getKP(kps,24):getKP(kps,23);
+      if(rKnee&&hipOpp){
+        const bonus=Math.max(0,Math.min(1,(hipOpp.y-rKnee.y)/80));
+        s_raise=Math.min(10,s_raise+bonus);
+      }
+    }else s_raise=0;
+
+    const wd=wristDistance(kps);
+    let s_hands=0;
+    if(wd<50)s_hands=10;else if(wd<80)s_hands=8;else if(wd<120)s_hands=6;else s_hands=3;
+
+    const now=Date.now();const elapsed=holdStart?(now-holdStart)/1000:0;
+    let s_balance=Math.max(0,Math.min(10,(elapsed/5)*10));
+    if(!inFrame(kps))s_balance=Math.min(s_balance,5);
+    if(lastKeypoints){
+      const supPrev=(support==='L')?lastKeypoints[27]:lastKeypoints[28];
+      const raisePrev=(raise==='L')?lastKeypoints[27]:lastKeypoints[28];
+      const supDrift=(supAnk&&supPrev&&supPrev.score>=0.3)?Math.hypot(supAnk.x-supPrev.x,supAnk.y-supPrev.y):0;
+      const raiseDrift=(rAnk&&raisePrev&&raisePrev.score>=0.3)?Math.hypot(rAnk.x-raisePrev.x,rAnk.y-raisePrev.y):0;
+      const drift=Math.max(supDrift,raiseDrift);
+      if(drift>8){const pen=Math.min(4,(drift-8)/10*4);s_balance=Math.max(0,s_balance-pen);}
+    }
+
+    const s0_10=0.3*s_support+0.3*s_raise+0.2*s_hands+0.2*s_balance;
+    const total=Math.round(s0_10*10);
+    const pass=(s0_10>=6);
+    const msg=`支撑腿:${s_support.toFixed(1)} 抬膝贴合:${s_raise.toFixed(1)} 手臂:${s_hands.toFixed(1)} 平衡完整:${s_balance.toFixed(1)}（${pass?'合格':'不合格'}）`;
+    return{score:total,msg};
+  }
+
+  // 检测循环
+  async function detectLoop(){
+    if(!running)return;
+    try{
+      const poses=await detector.estimatePoses(video);
+      if(poses.length===0){
+        hudEl.textContent='未检测到人体';
+        holdStart=null;
+      }else{
+        const kps=poses[0].keypoints;
+        drawPoints(kps);
+        lastKeypoints=kps;
+        const lw=kps[15],rw=kps[16];
+        if(lw&&rw&&dist(lw,rw)<60){
+          if(!holdStart)holdStart=Date.now();
+          const elapsed=(Date.now()-holdStart)/1000;
+          if(elapsed>=5){
+            const res=evaluate(kps);
+            showResult(res.score,res.msg);
+            return;
+          }
+          hudEl.textContent=`✅ 合十中：${Math.ceil(5-elapsed)} 秒`;
+        }else{
+          holdStart=null;
+          hudEl.textContent='请双手合十于胸前';
+        }
+      }
+    }catch(err){
+      console.error('检测出错:',err);
+      statusEl.textContent='⚠️ 检测异常';
+    }
+    requestAnimationFrame(detectLoop);
+  }
+
+  function showResult(score,msg){
+    scoreEl.textContent=score+' 分';
+    summaryEl.textContent=msg||(score>=80?'优秀！':score>=60?'良好':'需改进');
+    resultDiv.style.display='flex';
+    running=false;
+  }
+
+  startBtn.onclick=startCamera;
+  againBtn.onclick=()=>{resultDiv.style.display='none';holdStart=null;running=true;detectLoop();};
 
 })();
 </script>
