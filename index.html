@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-  <title>树式评估 · 智能精准评分</title>
+  <title>树式评估 · 5秒自动评分</title>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.12.0/dist/tf-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.12.0/dist/tf-converter.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.12.0/dist/tf-backend-webgl.min.js"></script>
@@ -16,6 +16,7 @@
     #hud { position: absolute; top: 40px; width: 100%; text-align: center; font-size: 18px; font-weight: bold; }
     #overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.9); z-index: 10; }
     button { background: #4fc3f7; color: white; border: none; padding: 14px 28px; border-radius: 12px; font-size: 16px; margin-top: 20px; cursor: pointer; box-shadow: 0 4px 12px rgba(79,195,247,0.2); }
+    .btn-ghost { background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); }
     #result { display: none; position: absolute; inset: 0; background: rgba(0,0,0,0.8); justify-content: center; align-items: center; z-index: 20; }
     .card { background: rgba(30,30,35,0.95); padding: 20px; border-radius: 16px; text-align: center; max-width: 90%; width: 300px; }
     .score { font-size: 40px; margin: 10px 0; }
@@ -28,7 +29,7 @@
   <div id="hud"></div>
 
   <div id="overlay">
-    <div style="font-size:22px;">🧘 树式评估 · 智能评分</div>
+    <div style="font-size:22px;">🧘 树式评估 · 自动评分</div>
     <div style="margin-top:8px; font-size:14px; color:#bbb;">
       请站定，双手合十于胸前。<br>
       保持姿势 <b>5秒</b> 自动评分。
@@ -60,149 +61,10 @@
 
       let detector = null;
       let running = false;
-      let validPrayFrames = 0;     // 连续合十帧数
       let holdStart = null;
       let lastKeypoints = null;
 
-      // 工具函数
-      const dist = (a, b) => a && b ? Math.hypot(a.x - b.x, a.y - b.y) : null;
-      const angle = (a, b, c) => {
-        if (!a || !b || !c) return null;
-        const ab = dist(a, b), bc = dist(b, c), ac = dist(a, c);
-        if (!ab || !bc) return null;
-        const cosB = (ab * ab + bc * bc - ac * ac) / (2 * ab * bc);
-        return Math.acos(Math.max(-1, Math.min(1, cosB))) * 180 / Math.PI;
-      };
-
-      // ✅ 改进版：基于肩宽比例判断合十（适配远近）
-      function isPraying(kps) {
-        const lw = kps[15], rw = kps[16], ls = kps[11], rs = kps[12];
-        if (!lw || !rw || !ls || !rs) return false;
-        if (lw.score < 0.4 || rw.score < 0.4 || ls.score < 0.4 || rs.score < 0.4) return false;
-        const handDist = dist(lw, rw);
-        const shoulderDist = dist(ls, rs);
-        return handDist && shoulderDist && handDist < shoulderDist * 0.35;
-      }
-
-      // ✅ 自动判断支撑腿（更直的那条）
-      function getLegInfo(kps) {
-        const leftKneeAngle = angle(kps[23], kps[25], kps[27]);  // 左膝
-        const rightKneeAngle = angle(kps[24], kps[26], kps[28]); // 右膝
-
-        if (leftKneeAngle === null || rightKneeAngle === null) return null;
-
-        // 支撑腿：角度更大的（更接近180）
-        if (leftKneeAngle >= rightKneeAngle) {
-          return {
-            supportAngle: leftKneeAngle,
-            liftedAngle: rightKneeAngle,
-            side: 'left'
-          };
-        } else {
-          return {
-            supportAngle: rightKneeAngle,
-            liftedAngle: leftKneeAngle,
-            side: 'right'
-          };
-        }
-      }
-
-      // ✅ 躯干垂直度（肩膀中点 vs 髋部中点）
-      function getTorsoVertical(kps) {
-        const ls = kps[11], rs = kps[12], lh = kps[23], rh = kps[24];
-        if (!ls || !rs || !lh || !rh) return 1; // 默认垂直
-
-        const shoulderMidX = (ls.x + rs.x) / 2;
-        const hipMidX = (lh.x + rh.x) / 2;
-        const torsoTilt = Math.abs(shoulderMidX - hipMidX);
-        const torsoHeight = Math.abs((ls.y + rs.y) / 2 - (lh.y + rh.y) / 2);
-        return torsoHeight > 0 ? Math.min(1, torsoTilt / torsoHeight) : 1;
-      }
-
-      function drawPoints(kps) {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = 'red';
-        for (const kp of kps) {
-          if (kp.score > 0.3) {
-            ctx.beginPath();
-            ctx.arc(kp.x, kp.y, 4, 0, Math.PI * 2);
-            ctx.fill();
-          }
-        }
-      }
-
-      // ✅ 更精准的评分逻辑
-      function evaluate(kps) {
-        const legInfo = getLegInfo(kps);
-        if (!legInfo) return { score: 0, msg: '腿部关键点不完整' };
-
-        const torsoTilt = getTorsoVertical(kps);
-
-        let score = 0;
-        let feedback = [];
-
-        // 支撑腿伸直（>165° 得满分）
-        if (legInfo.supportAngle > 170) score += 40;
-        else if (legInfo.supportAngle > 160) score += 30;
-        else if (legInfo.supportAngle > 150) score += 20;
-        else feedback.push('支撑腿不够直');
-
-        // 抬起腿弯曲（<120° 得满分）
-        if (legInfo.liftedAngle < 110) score += 40;
-        else if (legInfo.liftedAngle < 130) score += 30;
-        else if (legInfo.liftedAngle < 150) score += 20;
-        else feedback.push('抬起腿不够弯');
-
-        // 躯干垂直（倾斜越小越好）
-        const verticalScore = Math.max(0, 20 * (1 - torsoTilt));
-        score += Math.round(verticalScore);
-
-        score = Math.min(100, Math.round(score));
-        const msg = feedback.length ? feedback.join('；') : '';
-
-        return { score, msg };
-      }
-
-      async function detectLoop() {
-        if (!running) return;
-        try {
-          const poses = await detector.estimatePoses(video);
-          if (poses.length === 0) {
-            hudEl.textContent = '未检测到人体';
-            validPrayFrames = 0;
-            holdStart = null;
-          } else {
-            const kps = poses[0].keypoints;
-            lastKeypoints = kps;
-            drawPoints(kps);
-
-            if (isPraying(kps)) {
-              validPrayFrames++;
-              if (validPrayFrames >= 3) { // 连续3帧合十才算稳定
-                if (!holdStart) holdStart = Date.now();
-                const elapsed = (Date.now() - holdStart) / 1000;
-                if (elapsed >= 5) {
-                  const res = evaluate(kps);
-                  showResult(res.score, res.msg);
-                  return;
-                }
-                hudEl.textContent = `✅ 合十中：${Math.ceil(5 - elapsed)} 秒`;
-              } else {
-                hudEl.textContent = '请保持双手合十…';
-              }
-            } else {
-              validPrayFrames = 0;
-              holdStart = null;
-              hudEl.textContent = '请双手合十于胸前';
-            }
-          }
-        } catch (err) {
-          console.error('检测出错:', err);
-          statusEl.textContent = '⚠️ 检测异常';
-        }
-        requestAnimationFrame(detectLoop);
-      }
-
+      // 启动摄像头（关键：不调用 play()，只设 srcObject）
       async function startCamera() {
         try {
           statusEl.textContent = '📷 请求摄像头…';
@@ -210,20 +72,29 @@
             video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
             audio: false
           });
+
           video.srcObject = stream;
+
+          // 监听元数据加载完成 → 视频尺寸就绪
           video.onloadedmetadata = () => {
             canvas.width = video.videoWidth || 640;
             canvas.height = video.videoHeight || 480;
             statusEl.textContent = '🧠 加载AI模型…';
             loadModel();
           };
-          video.play().catch(() => {});
+
+          // 关键：在 onloadedmetadata 后才开始播放
+          video.play().catch(err => {
+            console.warn('play() 被阻止，但不影响流程');
+          });
         } catch (err) {
+          console.error('摄像头失败:', err);
           statusEl.textContent = '❌ 摄像头访问失败';
-          alert('请允许摄像头权限');
+          alert('无法访问摄像头，请检查权限设置');
         }
       }
 
+      // 加载模型
       async function loadModel() {
         try {
           await tf.setBackend('webgl');
@@ -239,26 +110,105 @@
           statusEl.textContent = '准备就绪';
           detectLoop();
         } catch (err) {
-          statusEl.textContent = '❌ 模型加载失败';
-          alert('AI加载失败，请刷新');
+          console.error('模型加载失败:', err);
+          statusEl.textContent = '❌ AI模型加载失败';
+          alert('AI模型加载失败，请刷新重试');
         }
       }
 
+      // 计算两点距离
+      const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+      // 是否双手合十
+      function isPraying(kps) {
+        const lw = kps[15], rw = kps[16];
+        return lw && rw && dist(lw, rw) < 60;
+      }
+
+      // 绘制关键点
+      function drawPoints(kps) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = 'red';
+        for (const kp of kps) {
+          if (kp.score > 0.3) {
+            ctx.beginPath();
+            ctx.arc(kp.x, kp.y, 4, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+
+      // 评分逻辑
+      function evaluate(kps) {
+        const LKA = angle(kps[23], kps[25], kps[27]);
+        const RKA = angle(kps[24], kps[26], kps[28]);
+        if (LKA === null || RKA === null) return { score: 0, msg: '腿部关键点缺失' };
+
+        const straight = Math.max(LKA, RKA);
+        const bent = Math.min(LKA, RKA);
+        let score = 0;
+        if (straight > 165) score += 50;
+        if (bent < 120) score += 50;
+        return { score: Math.min(100, Math.round(score)), msg: '' };
+      }
+
+      // 角度计算
+      function angle(a, b, c) {
+        if (!a || !b || !c) return null;
+        const ab = Math.hypot(a.x - b.x, a.y - b.y);
+        const bc = Math.hypot(b.x - c.x, b.y - c.y);
+        const ac = Math.hypot(a.x - c.x, a.y - c.y);
+        if (ab === 0 || bc === 0) return null;
+        const cosB = (ab * ab + bc * bc - ac * ac) / (2 * ab * bc);
+        return Math.acos(Math.max(-1, Math.min(1, cosB))) * 180 / Math.PI;
+      }
+
+      // 主循环
+      async function detectLoop() {
+        if (!running) return;
+        try {
+          const poses = await detector.estimatePoses(video);
+          if (poses.length === 0) {
+            hudEl.textContent = '未检测到人体';
+            holdStart = null;
+          } else {
+            const kps = poses[0].keypoints;
+            lastKeypoints = kps;
+            drawPoints(kps);
+
+            if (isPraying(kps)) {
+              if (!holdStart) holdStart = Date.now();
+              const elapsed = (Date.now() - holdStart) / 1000;
+              if (elapsed >= 5) {
+                const res = evaluate(kps);
+                showResult(res.score, res.msg);
+                return;
+              }
+              hudEl.textContent = `✅ 合十中：${Math.ceil(5 - elapsed)} 秒`;
+            } else {
+              holdStart = null;
+              hudEl.textContent = '请双手合十于胸前';
+            }
+          }
+        } catch (err) {
+          console.error('检测出错:', err);
+          statusEl.textContent = '⚠️ 检测异常';
+        }
+        requestAnimationFrame(detectLoop);
+      }
+
+      // 显示结果
       function showResult(score, msg) {
         scoreEl.textContent = score + ' 分';
-        summaryEl.textContent = msg || (
-          score >= 90 ? '🌟 完美！' :
-          score >= 75 ? '👍 优秀！' :
-          score >= 60 ? '🙂 良好' : '💪 继续练习'
-        );
+        summaryEl.textContent = msg || (score >= 80 ? '优秀！' : score >= 60 ? '良好' : '需改进');
         resultDiv.style.display = 'flex';
         running = false;
       }
 
+      // 按钮事件
       startBtn.onclick = startCamera;
       againBtn.onclick = () => {
         resultDiv.style.display = 'none';
-        validPrayFrames = 0;
         holdStart = null;
         running = true;
         detectLoop();
