@@ -64,7 +64,7 @@
       let holdStart = null;
       let lastKeypoints = null;
 
-      // 启动摄像头（关键：不调用 play()，只设 srcObject）
+      // 启动摄像头
       async function startCamera() {
         try {
           statusEl.textContent = '📷 请求摄像头…';
@@ -75,7 +75,6 @@
 
           video.srcObject = stream;
 
-          // 监听元数据加载完成 → 视频尺寸就绪
           video.onloadedmetadata = () => {
             canvas.width = video.videoWidth || 640;
             canvas.height = video.videoHeight || 480;
@@ -83,7 +82,6 @@
             loadModel();
           };
 
-          // 关键：在 onloadedmetadata 后才开始播放
           video.play().catch(err => {
             console.warn('play() 被阻止，但不影响流程');
           });
@@ -116,8 +114,18 @@
         }
       }
 
-      // 计算两点距离
+      // 工具函数
       const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+      function angle(a, b, c) {
+        if (!a || !b || !c) return null;
+        const ab = Math.hypot(a.x - b.x, a.y - b.y);
+        const bc = Math.hypot(b.x - c.x, b.y - c.y);
+        const ac = Math.hypot(a.x - c.x, a.y - c.y);
+        if (ab === 0 || bc === 0) return null;
+        const cosB = (ab * ab + bc * bc - ac * ac) / (2 * ab * bc);
+        return Math.acos(Math.max(-1, Math.min(1, cosB))) * 180 / Math.PI;
+      }
 
       // 是否双手合十
       function isPraying(kps) {
@@ -138,29 +146,64 @@
         }
       }
 
-      // 评分逻辑
+      // ✅ 树式专用评分逻辑
       function evaluate(kps) {
-        const LKA = angle(kps[23], kps[25], kps[27]);
-        const RKA = angle(kps[24], kps[26], kps[28]);
-        if (LKA === null || RKA === null) return { score: 0, msg: '腿部关键点缺失' };
+        const leftHip = kps[23], rightHip = kps[24];
+        const leftKnee = kps[25], rightKnee = kps[26];
+        const leftAnkle = kps[27], rightAnkle = kps[28];
+        const leftShoulder = kps[11], rightShoulder = kps[12];
 
-        const straight = Math.max(LKA, RKA);
-        const bent = Math.min(LKA, RKA);
         let score = 0;
-        if (straight > 165) score += 50;
-        if (bent < 120) score += 50;
-        return { score: Math.min(100, Math.round(score)), msg: '' };
-      }
+        const feedback = [];
 
-      // 角度计算
-      function angle(a, b, c) {
-        if (!a || !b || !c) return null;
-        const ab = Math.hypot(a.x - b.x, a.y - b.y);
-        const bc = Math.hypot(b.x - c.x, b.y - c.y);
-        const ac = Math.hypot(a.x - c.x, a.y - c.y);
-        if (ab === 0 || bc === 0) return null;
-        const cosB = (ab * ab + bc * bc - ac * ac) / (2 * ab * bc);
-        return Math.acos(Math.max(-1, Math.min(1, cosB))) * 180 / Math.PI;
+        // 1. 支撑腿（假设为左腿）是否微屈（170°~178°）
+        const supportLegAngle = angle(leftHip, leftKnee, leftAnkle);
+        if (supportLegAngle && supportLegAngle > 170 && supportLegAngle < 178) {
+          score += 25;
+        } else if (supportLegAngle >= 178) {
+          feedback.push("站立腿超伸");
+        } else if (supportLegAngle <= 170) {
+          feedback.push("站立腿过弯");
+        }
+
+        // 2. 抬腿腿（右腿）是否弯曲（<130°）
+        const liftedLegAngle = angle(rightHip, rightKnee, rightAnkle);
+        if (liftedLegAngle && liftedLegAngle < 130) {
+          score += 25;
+        } else {
+          feedback.push("抬腿膝盖未弯曲");
+        }
+
+        // 3. 骨盆是否严重倾斜（左右髋部x差值）
+        const hipDiff = Math.abs(leftHip.x - rightHip.x);
+        if (hipDiff < 30) {
+          score += 20;
+        } else {
+          feedback.push("骨盆倾斜");
+        }
+
+        // 4. 上身是否垂直（肩与髋对齐）
+        const shoulderMidX = (leftShoulder.x + rightShoulder.x) / 2;
+        const hipMidX = (leftHip.x + rightHip.x) / 2;
+        const torsoOffset = Math.abs(shoulderMidX - hipMidX);
+        if (torsoOffset < 20) {
+          score += 20;
+        } else {
+          feedback.push("上身歪斜");
+        }
+
+        // 5. 双手是否合十
+        const lw = kps[15], rw = kps[16];
+        if (lw && rw && dist(lw, rw) < 60) {
+          score += 10;
+        } else {
+          feedback.push("双手未合十");
+        }
+
+        return {
+          score: Math.min(100, Math.round(score)),
+          msg: feedback.length ? feedback.join('、') : ''
+        };
       }
 
       // 主循环
@@ -200,7 +243,11 @@
       // 显示结果
       function showResult(score, msg) {
         scoreEl.textContent = score + ' 分';
-        summaryEl.textContent = msg || (score >= 80 ? '优秀！' : score >= 60 ? '良好' : '需改进');
+        if (msg) {
+          summaryEl.textContent = msg;
+        } else {
+          summaryEl.textContent = score >= 80 ? '优秀！' : score >= 60 ? '良好' : '需改进';
+        }
         resultDiv.style.display = 'flex';
         running = false;
       }
