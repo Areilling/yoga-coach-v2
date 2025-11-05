@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>🧘 智慧体育 · 瑜伽评估</title>
+  <title>🧘 智慧体育 · 瑜伽评估（调试版）</title>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.12.0/dist/tf-core.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.12.0/dist/tf-converter.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.12.0/dist/tf-backend-webgl.min.js"></script>
@@ -22,6 +22,15 @@
       height: 100vh;
       object-fit: cover;
       transform: scaleX(-1);
+      display: none;
+    }
+    #canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 5;
       display: none;
     }
     #overlay {
@@ -56,14 +65,27 @@
       color: #aaa;
       width: 100%;
     }
+    #debug {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: #ffcc00;
+      font-size: 14px;
+      z-index: 20;
+      background: rgba(0,0,0,0.6);
+      padding: 5px;
+      border-radius: 4px;
+    }
   </style>
 </head>
 <body>
   <video id="video" playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <div id="debug">等待启动...</div>
   
   <div id="overlay">
     <div style="text-align: center; color: white; font-size: 24px; max-width: 80%;">
-      🧘 智慧体育 · 瑜伽体式评估<br>
+      🧘 智慧体育 · 瑜伽评估<br>
       <span style="font-size: 16px; color: #bbb; margin-top: 10px; display: block;">
         请在光线充足处使用
       </span>
@@ -74,36 +96,63 @@
 
   <script>
     const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
     const overlay = document.getElementById('overlay');
     const startBtn = document.getElementById('startBtn');
+    const debugEl = document.getElementById('debug');
 
-    // 全局变量
-    let detector = null;
-
-    // 用户点击后才初始化一切
     startBtn.addEventListener('click', async () => {
       try {
-        // 第一步：获取摄像头（必须在用户手势后）
+        debugEl.textContent = '正在请求摄像头...';
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: 640, height: 480 },
           audio: false
         });
 
-        // 第二步：绑定流
         video.srcObject = stream;
         video.style.display = 'block';
+        canvas.style.display = 'block';
         overlay.style.display = 'none';
-
-        // 第三步：强制播放（关键！）
         await video.play();
 
-        // 第四步：加载模型（延迟加载，避免卡顿）
-        loadModelAndDetect();
+        // 设置 canvas 尺寸
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+
+        debugEl.textContent = '加载AI模型...';
+        await tf.setBackend('webgl');
+        const detector = await poseDetection.createDetector(
+          poseDetection.SupportedModels.BlazePose,
+          { runtime: 'tfjs', modelType: 'lite' }
+        );
+        debugEl.textContent = '✅ 模型加载成功！';
+
+        const feedback = document.createElement('div');
+        feedback.id = 'feedback';
+        feedback.style.cssText = 'position:absolute;top:60px;width:100%;text-align:center;color:white;font-size:20px;z-index:20;';
+        document.body.appendChild(feedback);
+
+        const detect = async () => {
+          const poses = await detector.estimatePoses(video);
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+          if (poses.length > 0 && poses[0].keypoints) {
+            debugEl.textContent = `✅ 检测到 ${poses.length} 人`;
+            drawKeypoints(poses[0].keypoints, ctx);
+            evaluatePose(poses[0].keypoints, feedback);
+          } else {
+            debugEl.textContent = '⚠️ 未检测到人体';
+            feedback.textContent = '请对准镜头，全身入镜';
+          }
+          requestAnimationFrame(detect);
+        };
+        detect();
       } catch (err) {
         console.error(err);
+        debugEl.textContent = '❌ 启动失败: ' + (err.message || '未知错误');
         overlay.innerHTML = `<div style="color:#ff6b6b;font-size:18px;text-align:center;">
-          ❌ 无法访问摄像头<br>
-          <span style="font-size:14px;color:#ccc;">请检查微信权限</span>
+          启动失败<br>
           <button id="retryBtn" style="margin-top:15px;background:#ff6b6b;color:white;border:none;padding:10px 20px;border-radius:8px;">
             重试
           </button>
@@ -112,41 +161,14 @@
       }
     });
 
-    async function loadModelAndDetect() {
-      const status = document.createElement('div');
-      status.id = 'status';
-      status.style.cssText = 'position:absolute;top:20px;width:100%;text-align:center;color:#4fc3f7;font-size:18px;z-index:20;';
-      document.body.appendChild(status);
-      status.textContent = '⏳ 加载AI模型...';
-
-      try {
-        await tf.setBackend('webgl');
-        detector = await poseDetection.createDetector(
-          poseDetection.SupportedModels.BlazePose,
-          { runtime: 'tfjs', modelType: 'lite' }
-        );
-        status.textContent = '✅ 准备就绪！请做瑜伽...';
-
-        const feedback = document.createElement('div');
-        feedback.id = 'feedback';
-        feedback.style.cssText = 'position:absolute;top:60px;width:100%;text-align:center;color:white;font-size:20px;z-index:20;';
-        document.body.appendChild(feedback);
-
-        // 开始检测
-        const detect = async () => {
-          if (!detector) return;
-          const poses = await detector.estimatePoses(video);
-          if (poses.length > 0 && poses[0].keypoints) {
-            evaluatePose(poses[0].keypoints, feedback);
-          } else {
-            feedback.textContent = '未检测到人体，请对准镜头';
-          }
-          requestAnimationFrame(detect);
-        };
-        detect();
-      } catch (e) {
-        console.error(e);
-        status.textContent = '❌ AI模型加载失败';
+    function drawKeypoints(keypoints, ctx) {
+      for (const keypoint of keypoints) {
+        if (keypoint.score > 0.3) {
+          ctx.beginPath();
+          ctx.arc(keypoint.x, keypoint.y, 5, 0, 2 * Math.PI);
+          ctx.fillStyle = 'red';
+          ctx.fill();
+        }
       }
     }
 
