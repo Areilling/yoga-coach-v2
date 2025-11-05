@@ -1,96 +1,123 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>🧘 智慧体育 · 瑜伽评估（树式强化版）</title>
-  <!-- TFJS & Pose Detection -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.12.0/dist/tf-core.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.12.0/dist/tf-converter.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.12.0/dist/tf-backend-webgl.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.0/dist/pose-detection.min.js"></script>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; color: #fff; font-family: "PingFang SC", system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-    .stage { position: relative; width: 100vw; height: 100vh; }
-    #video, #canvas {
-      position: absolute; inset: 0; width: 100%; height: 100%;
-      object-fit: cover; transform: scaleX(-1); /* 前置摄像头镜像，绘制层保持一致 */
-    }
-    #status, #feedback, #fps {
-      position: absolute; left: 0; width: 100%; text-align: center; z-index: 20; pointer-events: none;
-      text-shadow: 0 2px 6px rgba(0,0,0,.6);
-    }
-    #status { top: 16px; color: #4fc3f7; font-size: 16px; }
-    #feedback { top: 52px; color: #fff; font-size: 18px; font-weight: 600; }
-    #fps { top: 84px; color: #bbb; font-size: 13px; }
-    #overlay {
-      position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
-      background: rgba(0,0,0,.92); z-index: 30;
-    }
-    .title { text-align: center; color: #fff; font-size: 24px; line-height: 1.5; }
-    .subtitle { font-size: 14px; color: #bbb; margin-top: 8px; text-align: center; }
-    .controls {
-      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
-      display: flex; gap: 10px; z-index: 25;
-    }
-    button {
-      background: #4fc3f7; color: #fff; border: none; padding: 12px 16px; border-radius: 12px; font-size: 15px; font-weight: 600; cursor: pointer;
-      box-shadow: 0 6px 18px rgba(79,195,247,.25);
-    }
-    button.alt { background: #2ecc71; }
-    button.ghost { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); }
-    .tips { position: absolute; bottom: 8px; width: 100%; text-align: center; color: #aaa; font-size: 12px; }
-    .legend {
-      position: absolute; right: 12px; bottom: 60px; background: rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.1);
-      border-radius: 10px; padding: 8px 10px; font-size: 12px; color: #ddd; z-index: 24;
-    }
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<title>🧘 智慧体育·树式评估（稳定后评分）</title>
+<!-- TFJS & Pose Detection -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.12.0/dist/tf-core.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.12.0/dist/tf-converter.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.12.0/dist/tf-backend-webgl.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.0/dist/pose-detection.min.js"></script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;background:#000;color:#fff;font-family:"PingFang SC",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden}
+  .stage{position:relative;width:100vw;height:100vh}
+  #video,#canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+  #status,#hud,#fps{position:absolute;left:0;width:100%;text-align:center;z-index:10;text-shadow:0 2px 6px rgba(0,0,0,.6)}
+  #status{top:12px;color:#4fc3f7;font-size:14px}
+  #hud{top:40px;color:#fff;font-size:16px;font-weight:600}
+  #fps{top:68px;color:#bbb;font-size:12px}
+  #overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.92);z-index:20}
+  .title{font-size:22px;line-height:1.5;text-align:center}
+  .subtitle{margin-top:8px;font-size:14px;color:#bbb;text-align:center}
+  .controls{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);display:flex;gap:10px;z-index:12}
+  button{background:#4fc3f7;color:#fff;border:none;padding:10px 14px;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 6px 18px rgba(79,195,247,.25)}
+  button.ghost{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18)}
+  .legend{position:absolute;right:12px;bottom:70px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:8px 10px;font-size:12px;color:#ddd;z-index:11}
+  .tips{position:absolute;bottom:8px;width:100%;text-align:center;color:#aaa;font-size:12px}
+  /* 结果面板 */
+  #result{position:absolute;inset:0;display:none;align-items:center;justify-content:center;z-index:30;background:rgba(0,0,0,.65);backdrop-filter: blur(2px)}
+  .card{max-width:520px;width:88vw;background:rgba(20,20,22,.95);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:18px}
+  .card h3{font-size:18px;margin-bottom:8px}
+  .score{font-size:40px;font-weight:800;margin:6px 0 12px}
+  .ok{color:#2ecc71}.bad{color:#ff6b6b}
+  ul{margin:8px 0 0 18px;color:#ddd;font-size:14px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+  .row>button{flex:1}
+</style>
 </head>
 <body>
-  <div class="stage">
-    <video id="video" playsinline muted></video>
-    <canvas id="canvas"></canvas>
-    <div id="status">⏳ 加载中...</div>
-    <div id="feedback"></div>
-    <div id="fps"></div>
+<div class="stage">
+  <video id="video" playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <div id="status">⏳ 就绪中…</div>
+  <div id="hud"></div>
+  <div id="fps"></div>
 
-    <div id="overlay">
-      <div class="title">🧘 智慧体育 · 瑜伽评估<br/>（树式 · 实时姿态）</div>
-      <div class="subtitle">请在光线充足处，保持全身入镜；优先使用 HTTPS 域名访问。</div>
-      <div style="height:16px"></div>
-      <button id="startBtn">👉 点击开启摄像头</button>
-      <div class="subtitle" style="margin-top:10px;">若无法开启，请在浏览器允许“摄像头权限”，或关闭其它占用摄像头的 App。</div>
-    </div>
-
-    <div class="controls">
-      <button id="switchBtn" class="ghost">切换前/后摄</button>
-      <button id="resetBtn" class="ghost">重置</button>
-    </div>
-
-    <div class="legend">判定要素：膝角（弯/直）· 髋踝垂直度 · 抬脚高度（离地）</div>
-    <div class="tips">微信扫码可用 · 全本地推理 · 不上传任何视频/图像</div>
+  <div id="overlay">
+    <div class="title">🧘 智慧体育 · 树式评估（稳定后出分）</div>
+    <div class="subtitle">光线充足 · 全身入镜（含脚踝） · 建议使用 HTTPS</div>
+    <div style="height:16px"></div>
+    <button id="startBtn">👉 开启摄像头</button>
+    <div class="subtitle" style="margin-top:10px;">若失败：检查摄像头权限/关闭占用摄像头的应用</div>
   </div>
+
+  <div class="controls">
+    <button id="switchBtn" class="ghost">切换前/后摄</button>
+    <button id="resetBtn" class="ghost">重新加载</button>
+  </div>
+  <div class="legend">判定维度：直腿 · 弯腿 · 髋踝垂直 · 抬脚高度 · 稳定度 · 骨盆水平</div>
+  <div class="tips">全本地推理 · 不上传任何图像/视频</div>
+
+  <!-- 结果弹层 -->
+  <div id="result">
+    <div class="card">
+      <h3 id="resTitle">树式结果</h3>
+      <div class="score" id="resScore">--</div>
+      <div id="resSummary" style="font-size:14px;color:#ccc"></div>
+      <ul id="resTips"></ul>
+      <div class="row">
+        <button id="retryBtn" class="ghost">↺ 重新测一次</button>
+        <button id="closeBtn">完成</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
 (async () => {
+  // ====== 配置（可按需调参）======
+  const CFG = {
+    backend: 'webgl',
+    modelType: 'full',
+    smoothing: true,
+    // 树式阈值
+    STRAIGHT_MIN: 160,  // 站立腿膝角 ≥160 视为“直”
+    BENT_MAX: 120,      // 抬腿膝角 ≤120 视为“弯”
+    VERT_MAX: 0.25,     // 髋-踝“垂直度”（x差/ y差）≤0.25
+    FOOT_DELTA_MIN: 18, // 抬脚踝与站立脚踝的像素高度差 ≥18 视为“离地”
+    PELVIS_TILT_MAX: 18,// 左右髋点的y差（像素）≤18 视为“骨盆较水平”
+    HOLD_SEC: 2.0,      // 判定稳定持续秒数
+    EMA_ALPHA: 0.3,     // 指标平滑
+    // 评分权重（总计100）
+    W: { straight:30, bent:20, vertical:20, foot:10, stability:10, pelvis:10 }
+  };
+
   const video = document.getElementById('video');
   const canvas = document.getElementById('canvas');
-  const ctx = canvas.getContext('2d', { alpha: true });
+  const ctx = canvas.getContext('2d', { alpha:true });
   const overlay = document.getElementById('overlay');
   const startBtn = document.getElementById('startBtn');
   const switchBtn = document.getElementById('switchBtn');
   const resetBtn  = document.getElementById('resetBtn');
   const statusEl = document.getElementById('status');
-  const feedbackEl = document.getElementById('feedback');
+  const hudEl = document.getElementById('hud');
   const fpsEl = document.getElementById('fps');
 
-  let facing = 'user'; // 'user' 前置；'environment' 后置
-  let stream = null;
-  let detector = null;
-  let running = false;
+  const resultLayer = document.getElementById('result');
+  const resTitle = document.getElementById('resTitle');
+  const resScore = document.getElementById('resScore');
+  const resSummary = document.getElementById('resSummary');
+  const resTips = document.getElementById('resTips');
+  const retryBtn = document.getElementById('retryBtn');
+  const closeBtn = document.getElementById('closeBtn');
 
-  // —— 自适应 Canvas 像素比
+  let facing = 'user';
+  let stream = null, detector = null;
+  let running = false, finalized = false;
+
+  // 自适应 Canvas（含镜像）
   function fitCanvas() {
     const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
     const w = canvas.clientWidth || canvas.parentElement.clientWidth;
@@ -99,259 +126,248 @@
     canvas.height = Math.round(h * dpr);
     ctx.setTransform(1,0,0,1,0,0);
     ctx.scale(dpr, dpr);
-    // 与视频镜像保持一致
     ctx.translate(canvas.clientWidth, 0);
     ctx.scale(-1, 1);
   }
-  const ro = new ResizeObserver(fitCanvas);
-  ro.observe(canvas);
+  new ResizeObserver(fitCanvas).observe(canvas);
 
-  async function startCamera() {
-    statusEl.textContent = '📷 请求摄像头...';
-    if (stream) stream.getTracks().forEach(t => t.stop());
-    const constraints = {
-      audio: false,
-      video: {
-        facingMode: facing,
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 30, max: 30 }
-      }
-    };
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
-    video.srcObject = stream;
-    await video.play();
+  async function startCamera(){
+    statusEl.textContent='📷 请求摄像头…';
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio:false,
+      video:{facingMode:facing, width:{ideal:1280}, height:{ideal:720}, frameRate:{ideal:30,max:30}}
+    });
+    video.srcObject=stream; await video.play();
   }
 
-  async function loadModel() {
-    statusEl.textContent = '🧠 加载 AI 模型...';
-    await tf.setBackend('webgl');
-    await tf.ready();
-    // 预热：有助于第一次检测更快
-    tf.engine().startScope();
-    tf.tidy(() => tf.zeros([1, 224, 224, 3]));
-    tf.engine().endScope();
-
+  async function loadModel(){
+    statusEl.textContent='🧠 加载模型…';
+    await tf.setBackend(CFG.backend); await tf.ready();
     detector = await poseDetection.createDetector(
       poseDetection.SupportedModels.BlazePose,
-      {
-        runtime: 'tfjs',
-        modelType: 'full',        // full 关键点更齐全
-        enableSmoothing: true
-      }
+      { runtime:'tfjs', modelType:CFG.modelType, enableSmoothing:CFG.smoothing }
     );
   }
 
-  // —— 工具函数
-  function getPoint(kps, i, th=0.3) {
+  const getP = (kps,i,th=.3)=>{
     const kp = kps[i];
-    return (kp && (kp.score ?? kp.score > th)) ? { x: kp.x, y: kp.y, s: kp.score ?? 1 } : null;
-  }
-  function angleDeg(a, b, c) { // 夹角 ABC
-    if (!a || !b || !c) return null;
-    const r = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-    let d = Math.abs(r * 180 / Math.PI);
-    return (d > 180) ? (360 - d) : d;
-  }
-  function dist(a, b) {
-    if (!a || !b) return null;
-    const dx = a.x - b.x, dy = a.y - b.y;
-    return Math.hypot(dx, dy);
-  }
-  function vertness(a, b) { // 垂直度（0 完美垂直；越大越偏）
-    if (!a || !b) return null;
-    const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y) + 1e-6;
-    return dx / dy;
-  }
-  // 指标平滑（指数滑动平均）
-  const smooth = (() => {
-    const mem = new Map();
-    return (key, val, alpha=0.25) => {
-      if (val == null) return null;
-      const last = mem.get(key);
-      const now = (last == null) ? val : (alpha*val + (1-alpha)*last);
-      mem.set(key, now);
-      return now;
-    };
-  })();
+    if(!kp) return null;
+    const hasScore = typeof kp.score === 'number';
+    if(hasScore && kp.score < th) return null;
+    return {x:kp.x,y:kp.y,s:hasScore?kp.score:1}
+  };
+  const angleDeg = (a,b,c)=>{
+    if(!a||!b||!c) return null;
+    const r = Math.atan2(c.y-b.y,c.x-b.x) - Math.atan2(a.y-b.y,a.x-b.x);
+    let d = Math.abs(r*180/Math.PI);
+    return d>180 ? 360-d : d;
+  };
+  const vertness = (a,b)=> (a&&b)? (Math.abs(a.x-b.x)/(Math.abs(a.y-b.y)+1e-6)) : null;
+  const dist = (a,b)=> (a&&b)? Math.hypot(a.x-b.x,a.y-b.y):null;
 
-  // —— 绘制
-  function drawPose(kps) {
+  // 指标平滑与稳定检测
+  const ema = ((alpha)=>{
+    const mem=new Map();
+    return (k,v)=>{
+      if(v==null) return null;
+      const last=mem.get(k);
+      const now=(last==null)?v:alpha*v+(1-alpha)*last;
+      mem.set(k,now); return now;
+    }
+  })(CFG.EMA_ALPHA);
+
+  // 稳定性计时
+  let holdTimer = 0; // 满足树式条件时累积，单位秒
+  let lastTS = performance.now(), frameCnt=0, lastFPS=0;
+
+  // 简单摆动度：髋中心与肩中心的每帧位移（EMA）
+  let lastCOM=null; // center of mass proxy (hips mid)
+  let swayEma = 0;
+
+  function drawPose(kps){
     ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);
-    if (!kps?.length) return;
-    // 画骨架连接（使用常见连线）
+    if(!kps?.length) return;
     const edges = [
-      [11,13],[13,15], [12,14],[14,16],
-      [11,12], [23,24],
-      [11,23],[12,24],
-      [23,25],[25,27], [24,26],[26,28],
-      [27,29],[29,31], [28,30],[30,32]
+      [11,13],[13,15],[12,14],[14,16],
+      [11,12],[23,24],[11,23],[12,24],
+      [23,25],[25,27],[24,26],[26,28],
+      [27,29],[29,31],[28,30],[30,32]
     ];
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = 'rgba(79,195,247,.9)';
-    ctx.fillStyle = '#fff';
-
-    // 线
+    ctx.lineWidth=3; ctx.strokeStyle='rgba(79,195,247,.9)'; ctx.fillStyle='#fff';
     ctx.beginPath();
-    for (const [a,b] of edges) {
+    for(const [a,b] of edges){
       const p = kps[a], q = kps[b];
-      if (p?.score > .3 && q?.score > .3) {
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(q.x, q.y);
-      }
+      if(p?.score>.3 && q?.score>.3){ ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); }
     }
     ctx.stroke();
-
-    // 点
-    for (const p of kps) {
-      if (p?.score > .3) {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 4, 0, Math.PI*2);
-        ctx.fill();
-      }
+    for(const p of kps){
+      if(p?.score>.3){ ctx.beginPath(); ctx.arc(p.x,p.y,4,0,Math.PI*2); ctx.fill(); }
     }
   }
 
-  // —— 树式判定（鲁棒版）
-  function evaluateTreePose(kps) {
-    const L_HIP=23, R_HIP=24, L_KNEE=25, R_KNEE=26, L_ANK=27, R_ANK=28;
-    const leftHip  = getPoint(kps, L_HIP), rightHip = getPoint(kps, R_HIP);
-    const leftKnee = getPoint(kps, L_KNEE), rightKnee= getPoint(kps, R_KNEE);
-    const leftAnk  = getPoint(kps, L_ANK),  rightAnk = getPoint(kps, R_ANK);
+  function evalTree(kps){
+    const L_HIP=23,R_HIP=24,L_KNEE=25,R_KNEE=26,L_ANK=27,R_ANK=28, L_SH=11,R_SH=12;
+    const lh=getP(kps,L_HIP), rh=getP(kps,R_HIP), lk=getP(kps,L_KNEE), rk=getP(kps,R_KNEE), la=getP(kps,L_ANK), ra=getP(kps,R_ANK);
+    const ls=getP(kps,L_SH), rs=getP(kps,R_SH);
+    if(!lh||!rh||!lk||!rk||!la||!ra) return {ok:false, why:['全身入镜（含髋/膝/踝）']};
 
-    if (!leftHip || !rightHip || !leftKnee || !rightKnee) {
-      return { ok:false, msg:'请保持全身入镜（含髋/膝/踝）' };
-    }
+    // 角度
+    const lkAng = angleDeg(lh,lk,la);
+    const rkAng = angleDeg(rh,rk,ra);
 
-    const lk = angleDeg(leftHip, leftKnee, leftAnk);
-    const rk = angleDeg(rightHip, rightKnee, rightAnk);
+    // 垂直度与骨盆水平
+    const vL = vertness(lh,la);
+    const vR = vertness(rh,ra);
+    const pelvisTilt = Math.abs((lh?.y||0)-(rh?.y||0)); // y差越小越水平
 
-    // 膝角阈值
-    const STRAIGHT = 160, BENT = 120;
-
-    // 髋-踝垂直度（站立腿要足够垂直）
-    const vertLeft  = vertness(leftHip, leftAnk);
-    const vertRight = vertness(rightHip, rightAnk);
-    // 离地：抬起脚的踝相对站立脚的高度差（y 越小越高；画面坐标 y 向下）
-    const footDeltaY = leftAnk && rightAnk ? Math.abs(leftAnk.y - rightAnk.y) : null;
+    // 抬脚高度（像素）：两踝 y 差
+    const footDelta = Math.abs(la.y - ra.y);
 
     // 平滑
-    const lkS = smooth('lk', lk), rkS = smooth('rk', rk);
-    const vLS = smooth('vL', vertLeft), vRS = smooth('vR', vertRight);
-    const fdS = smooth('fd', footDeltaY);
+    const LKA = ema('lkAng', lkAng);
+    const RKA = ema('rkAng', rkAng);
+    const VL = ema('vL', vL);
+    const VR = ema('vR', vR);
+    const FD = ema('fd', footDelta);
+    const PT = ema('pt', pelvisTilt);
 
-    // 判定两种情况（左站/右站）
-    const leftStand =
-      (lkS !== null && rkS !== null && lkS > STRAIGHT && rkS < BENT) &&
-      (vLS !== null && vLS < 0.25); // 垂直度越小越好
+    // 判断左右站立
+    const leftStand  = (LKA!=null && RKA!=null && LKA>=CFG.STRAIGHT_MIN && RKA<=CFG.BENT_MAX && VL!=null && VL<=CFG.VERT_MAX);
+    const rightStand = (LKA!=null && RKA!=null && RKA>=CFG.STRAIGHT_MIN && LKA<=CFG.BENT_MAX && VR!=null && VR<=CFG.VERT_MAX);
+    const ok = leftStand || rightStand;
 
-    const rightStand =
-      (lkS !== null && rkS !== null && rkS > STRAIGHT && lkS < BENT) &&
-      (vRS !== null && vRS < 0.25);
+    // 摆动度（稳定性）：髋中心相邻帧位移
+    const hipMid = (lh&&rh)? {x:(lh.x+rh.x)/2, y:(lh.y+rh.y)/2} : null;
+    if(hipMid && lastCOM) {
+      const move = dist(hipMid,lastCOM)||0;
+      swayEma = ema('sway', move) ?? move;
+    }
+    lastCOM = hipMid;
 
-    // 额外提示：脚跟高度（离地）
-    let footCue = '';
-    if (fdS !== null && fdS < 18) { // 像素阈值，随分辨率大致可用
-      footCue = '· 抬起脚更高一些';
+    // HUD 数值
+    const hint = `L膝:${LKA?LKA.toFixed(0):'-'}°  R膝:${RKA?RKA.toFixed(0):'-'}° · 垂直度:${(leftStand?VL:VR)?.toFixed(2) ?? '-'} · 抬脚Δ:${FD?FD.toFixed(0):'-'} · 骨盆:${PT?PT.toFixed(0):'-'} · 摆动:${swayEma?.toFixed(1) ?? '-'}`;
+
+    // 评分（按最有可能的站立侧）
+    const standLeft = leftStand ? 'L' : (rightStand ? 'R' : null);
+    let score=0, problems=[];
+    if(standLeft){ // 左站右抬 or 右站左抬
+      const straight = (standLeft==='L') ? LKA : RKA;
+      const bent     = (standLeft==='L') ? RKA : LKA;
+      const vert     = (standLeft==='L') ? VL  : VR;
+      const footOK   = FD!=null && FD>=CFG.FOOT_DELTA_MIN;
+
+      // 各维得分（线性扣分，保底0）
+      const s_straight = Math.max(0, Math.min(1, (straight - CFG.STRAIGHT_MIN) / (180 - CFG.STRAIGHT_MIN)));
+      const s_bent     = Math.max(0, Math.min(1, (CFG.BENT_MAX - bent) / CFG.BENT_MAX));
+      const s_vert     = Math.max(0, Math.min(1, (CFG.VERT_MAX - vert) / CFG.VERT_MAX));
+      const s_foot     = footOK ? 1 : Math.max(0, Math.min(1, FD/CFG.FOOT_DELTA_MIN));
+      const s_pelvis   = Math.max(0, Math.min(1, (CFG.PELVIS_TILT_MAX - (PT||999)) / CFG.PELVIS_TILT_MAX));
+      // 稳定度（摆动越小越好；阈值经验 6px）
+      const swayTh = 6;
+      const s_stab = Math.max(0, Math.min(1, (swayTh - (swayEma||swayTh)) / swayTh));
+
+      score =
+        s_straight*CFG.W.straight +
+        s_bent*CFG.W.bent +
+        s_vert*CFG.W.vertical +
+        s_foot*CFG.W.foot +
+        s_stab*CFG.W.stability +
+        s_pelvis*CFG.W.pelvis;
+
+      // 记录问题点
+      if(s_straight < 0.8) problems.push('站立腿需更直');
+      if(s_bent < 0.8) problems.push('抬起腿需更弯曲');
+      if(s_vert < 0.8) problems.push('站立腿保持更垂直（髋-踝）');
+      if(!footOK) problems.push('抬起脚踝更高（明显离地）');
+      if(s_pelvis < 0.8) problems.push('骨盆保持水平（两髋等高）');
+      if(s_stab < 0.8) problems.push('保持稳定（上身减少摆动）');
     }
 
-    if (leftStand || rightStand) {
-      return { ok:true, msg:`✅ 单腿平衡稳定 ${footCue}`.trim() };
-    }
-    // 细化反馈
-    const tips = [];
-    if (lkS !== null && rkS !== null) {
-      if (lkS <= STRAIGHT && rkS <= STRAIGHT) tips.push('弯曲一侧膝盖');
-      if (lkS >= BENT && rkS >= BENT) tips.push('保持一侧膝盖伸直');
-    }
-    if ((vLS !== null && vLS >= 0.25) || (vRS !== null && vRS >= 0.25)) {
-      tips.push('站立腿保持垂直（髋-踝连线更竖直）');
-    }
-    if (fdS !== null && fdS < 18) tips.push('抬起脚更高一些');
-
-    return { ok:false, msg: tips.length ? ('请尝试树式：' + tips.join(' · ')) : '请尝试树式（单腿站立）' };
+    return { ok, leftStand, rightStand, hint, score:Math.round(score), problems };
   }
 
-  // —— 检测循环
-  let lastTS = performance.now(), frameCnt = 0, lastFPS = 0;
-  const SKIP = 0; // 可改为 1/2 做抽帧
-  let skipCnt = 0;
+  // 状态机：跟踪 → 持稳 → 结算
+  function finalizeAndShow(res){
+    finalized = true; running = false;
+    resTitle.textContent = '树式评估结果';
+    resScore.textContent = `${res.score} 分`;
+    resScore.className = 'score ' + (res.score>=85?'ok':(res.score>=60?'':'bad'));
+    resSummary.textContent = res.score>=85 ? '姿势规范，保持良好！' : (res.score>=60 ? '基本达标，注意细节调整。' : '未达标，建议根据提示逐项纠正。');
+    resTips.innerHTML = '';
+    if(res.problems?.length){
+      res.problems.forEach(t=>{
+        const li=document.createElement('li'); li.textContent=t; resTips.appendChild(li);
+      });
+    } else {
+      const li=document.createElement('li'); li.textContent='无明显问题点。';
+      resTips.appendChild(li);
+    }
+    resultLayer.style.display='flex';
+  }
 
-  async function loop() {
-    if (!running) return;
-    try {
-      if (skipCnt < SKIP) { skipCnt++; requestAnimationFrame(loop); return; }
-      skipCnt = 0;
-
-      const t0 = performance.now();
-      const poses = await detector.estimatePoses(video, { flipHorizontal: false });
+  let rafId=null;
+  async function loop(){
+    if(!running) return;
+    try{
+      const poses = await detector.estimatePoses(video,{flipHorizontal:false});
       const pose = poses?.[0];
-      if (!pose?.keypoints?.length) {
-        feedbackEl.textContent = '未检测到人体，请对准镜头并保持全身入镜';
+      if(!pose?.keypoints?.length){
+        hudEl.textContent='未检测到人体：请保持全身入镜';
         drawPose([]);
-      } else {
+      }else{
         drawPose(pose.keypoints);
-        const res = evaluateTreePose(pose.keypoints);
-        feedbackEl.textContent = res.msg || '';
-      }
+        const res = evalTree(pose.keypoints);
+        hudEl.textContent = (res.ok?'✅ 进入树式判定 · ':'请进入树式（单腿站立） · ') + res.hint;
 
-      // FPS
-      frameCnt++;
-      const now = performance.now();
-      if (now - lastTS >= 1000) {
-        lastFPS = frameCnt; frameCnt = 0; lastTS = now;
-      }
-      const size = video.videoWidth + '×' + video.videoHeight;
-      fpsEl.textContent = `FPS: ${lastFPS} · 分辨率 ${size}`;
+        // 计算FPS
+        frameCnt++; const now = performance.now();
+        if(now - lastTS >= 1000){ lastFPS=frameCnt; frameCnt=0; lastTS=now; }
+        fpsEl.textContent = `FPS:${lastFPS} · 分辨率 ${video.videoWidth}×${video.videoHeight}`;
 
-      // 动态提示
-      statusEl.textContent = '✅ 正在评估…';
-    } catch (e) {
+        // 持稳计时/结算
+        const dt = 1/(lastFPS||30);
+        if(res.ok) holdTimer += dt; else holdTimer = Math.max(0, holdTimer - dt*0.5); // 离开判定则回退一点
+        statusEl.textContent = res.ok ? `⏱ 稳定中… ${Math.min(CFG.HOLD_SEC, holdTimer).toFixed(1)}/${CFG.HOLD_SEC}s`
+                                      : '提示：单腿平衡、站立腿直、抬腿弯、髋踝垂直';
+        if(!finalized && holdTimer >= CFG.HOLD_SEC){
+          finalizeAndShow(res);
+          return; // 停止循环
+        }
+      }
+    }catch(e){
       console.error(e);
-      feedbackEl.textContent = '❌ 检测异常，点击“重置”再试';
-      statusEl.textContent = '❌ 出错';
+      statusEl.textContent='❌ 检测异常'; hudEl.textContent='点击“重新加载”再试';
     }
-    requestAnimationFrame(loop);
+    rafId = requestAnimationFrame(loop);
   }
 
-  // —— 事件
-  startBtn.addEventListener('click', async () => {
-    try {
-      await startCamera();
-      overlay.style.display = 'none';
-      fitCanvas();
+  // 事件
+  startBtn.addEventListener('click', async ()=>{
+    try{
+      await startCamera(); overlay.style.display='none'; fitCanvas();
       await loadModel();
-      running = true;
-      statusEl.textContent = '✅ 准备就绪！请做树式…';
+      running=true; finalized=false; holdTimer=0; statusEl.textContent='✅ 模型就绪，进入树式…';
       loop();
-    } catch (err) {
-      console.error(err);
-      statusEl.textContent = '❌ 启动失败';
-      feedbackEl.innerHTML = `<button onclick="location.reload()" style="background:#ff6b6b;color:white;border:none;padding:10px 20px;border-radius:10px;">重试</button>`;
-      overlay.style.display = '';
-    }
-  });
-
-  switchBtn.addEventListener('click', async () => {
-    facing = (facing === 'user') ? 'environment' : 'user';
-    try {
-      await startCamera();
-    } catch (e) {
+    }catch(e){
       console.error(e);
-      feedbackEl.textContent = '切换失败：请检查摄像头权限';
+      statusEl.textContent='❌ 启动失败'; overlay.style.display='';
     }
   });
-
-  resetBtn.addEventListener('click', () => {
-    location.reload();
+  switchBtn.addEventListener('click', async ()=>{
+    facing = (facing==='user') ? 'environment' : 'user';
+    try{ await startCamera(); }catch(e){ console.error(e); }
   });
+  resetBtn.addEventListener('click', ()=> location.reload());
+  retryBtn.addEventListener('click', ()=>{
+    resultLayer.style.display='none';
+    finalized=false; holdTimer=0; running=true; loop();
+  });
+  closeBtn.addEventListener('click', ()=> { resultLayer.style.display='none'; });
 
-  // 权限检测友好提示
-  if (!('mediaDevices' in navigator) || !('getUserMedia' in navigator.mediaDevices)) {
-    statusEl.textContent = '❌ 当前浏览器不支持摄像头调用';
-    startBtn.disabled = true;
-  } else {
-    statusEl.textContent = '⏳ 就绪中…';
+  // 兼容性提示
+  if(!('mediaDevices' in navigator) || !('getUserMedia' in navigator.mediaDevices)){
+    statusEl.textContent='❌ 当前浏览器不支持摄像头'; startBtn.disabled=true;
   }
 })();
 </script>
