@@ -1,291 +1,204 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>🧘 树式评估 · 5秒自动评分</title>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.12.0/dist/tf-core.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.12.0/dist/tf-converter.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.12.0/dist/tf-backend-webgl.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.0/dist/pose-detection.min.js"></script>
-<style>
-  *{margin:0;padding:0;box-sizing:border-box}
-  html,body{height:100%;background:#000;color:#fff;font-family:"PingFang SC",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden}
-  .stage{position:relative;width:100vw;height:100vh}
-  #video,#canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
-  #status,#hud,#fps{position:absolute;left:0;width:100%;text-align:center;z-index:10;text-shadow:0 2px 6px rgba(0,0,0,.6)}
-  #status{top:12px;color:#4fc3f7;font-size:14px}
-  #hud{top:40px;color:#fff;font-size:18px;font-weight:600}
-  #fps{top:68px;color:#bbb;font-size:12px}
-  #overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.92);z-index:20}
-  .title{font-size:22px;line-height:1.5;text-align:center}
-  .subtitle{margin-top:8px;font-size:14px;color:#bbb;text-align:center;max-width:86vw}
-  .controls{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);display:flex;flex-wrap:wrap;gap:10px;z-index:12;justify-content:center}
-  button{background:#4fc3f7;color:#fff;border:none;padding:10px 14px;border-radius:12px;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 6px 18px rgba(79,195,247,.25)}
-  button.ghost{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18)}
-  .legend{position:absolute;right:12px;bottom:70px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:8px 10px;font-size:12px;color:#ddd;z-index:11}
-  .chip{position:absolute;left:12px;bottom:70px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:6px 10px;font-size:12px;color:#ddd;z-index:11}
-  .tips{position:absolute;bottom:8px;width:100%;text-align:center;color:#aaa;font-size:12px}
-  /* 结果面板 */
-  #result{position:absolute;inset:0;display:none;align-items:center;justify-content:center;z-index:30;background:rgba(0,0,0,.65);backdrop-filter: blur(2px)}
-  .card{max-width:560px;width:90vw;background:rgba(20,20,22,.95);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:18px}
-  .card h3{font-size:18px;margin-bottom:8px}
-  .score{font-size:40px;font-weight:800;margin:6px 0 12px}
-  .ok{color:#2ecc71}.bad{color:#ff6b6b}
-  ul{margin:8px 0 0 18px;color:#ddd;font-size:14px}
-  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
-  .row>button{flex:1}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <title>树式评估 · 5秒自动评分</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body, html { height: 100%; background: #000; color: white; overflow: hidden; }
+    #video, #canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+    #status { position: absolute; top: 12px; width: 100%; text-align: center; color: #4fc3f7; font-size: 14px; text-shadow: 0 1px 3px #000; }
+    #hud { position: absolute; top: 40px; width: 100%; text-align: center; font-size: 18px; font-weight: bold; }
+    #overlay { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(0,0,0,0.9); z-index: 10; }
+    button { background: #4fc3f7; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-size: 16px; margin-top: 20px; cursor: pointer; }
+    #result { display: none; position: absolute; inset: 0; background: rgba(0,0,0,0.8); justify-content: center; align-items: center; z-index: 20; }
+    .card { background: rgba(30,30,35,0.95); padding: 20px; border-radius: 16px; text-align: center; max-width: 90%; width: 300px; }
+    .score { font-size: 40px; margin: 10px 0; }
+  </style>
 </head>
 <body>
-<div class="stage">
-  <video id="video" playsinline muted></video>
+  <video id="video" playsinline muted autoplay></video>
   <canvas id="canvas"></canvas>
-  <div id="status">⏳ 就绪中…</div>
+  <div id="status">⏳ 点击下方按钮开启摄像头</div>
   <div id="hud"></div>
-  <div id="fps"></div>
 
   <div id="overlay">
-    <div class="title">🧘 树式评估 · 自动评分</div>
-    <div class="subtitle">请站在明亮处，全身入镜。<br>启动方式：<b>站定 + 胸前合十</b>，保持姿势 <b>5秒</b> 自动评分。</div>
-    <div style="height:16px"></div>
-    <button id="startBtn">👉 开启摄像头</button>
+    <div>🧘 请站定，双手合十于胸前</div>
+    <div style="margin-top:8px; font-size:14px; color:#aaa">保持姿势 5 秒自动评分</div>
+    <button id="startBtn">开启摄像头</button>
   </div>
 
-  <div class="controls">
-    <button id="switchBtn" class="ghost">切换前/后摄</button>
-    <button id="freezeBtn" class="ghost">立即结算</button>
-    <button id="resetBtn" class="ghost">重新加载</button>
-  </div>
-
-  <div class="chip" id="peopleChip">人数：--</div>
-  <div class="legend">维度：直腿 · 弯腿 · 骨盆 · 手位 · 脚位 · 稳定度</div>
-  <div class="tips">全本地推理 · 不上传任何图像/视频</div>
-
-  <!-- 结果弹层 -->
   <div id="result">
     <div class="card">
-      <h3 id="resTitle">树式评估结果</h3>
-      <div class="score" id="resScore">--</div>
-      <div id="resSummary" style="font-size:14px;color:#ccc"></div>
-      <ul id="resTips"></ul>
-      <div class="row">
-        <button id="retryBtn" class="ghost">↺ 重新测一次</button>
-        <button id="closeBtn">完成</button>
-      </div>
+      <div>树式评估结果</div>
+      <div class="score" id="scoreEl">--</div>
+      <div id="summaryEl"></div>
+      <button id="againBtn" style="margin-top:16px; width:100%">再测一次</button>
     </div>
   </div>
-</div>
 
-<script>
-(async () => {
-  const CFG = {
-    backend: 'webgl',
-    poseModelType: 'full',   // 👈 关键：使用 full 模型
-    smoothing: true,
-    video: { width: 640, height: 480, fps: 24 },
-    HOLD_SEC: 5.0,           // 👈 5秒自动评分
-    STRAIGHT_MIN: 165,
-    BENT_MAX: 120,
-    PELVIS_TILT_MAX: 20,
-    PRAYER_WRIST_DIST: 60,   // 合十判定更宽松
-  };
+  <script>
+    (async () => {
+      const video = document.getElementById('video');
+      const canvas = document.getElementById('canvas');
+      const ctx = canvas.getContext('2d');
+      const statusEl = document.getElementById('status');
+      const hudEl = document.getElementById('hud');
+      const startBtn = document.getElementById('startBtn');
+      const resultDiv = document.getElementById('result');
+      const scoreEl = document.getElementById('scoreEl');
+      const summaryEl = document.getElementById('summaryEl');
+      const againBtn = document.getElementById('againBtn');
 
-  const video = document.getElementById('video');
-  const canvas = document.getElementById('canvas');
-  const ctx = canvas.getContext('2d', { alpha: true });
-  const statusEl = document.getElementById('status');
-  const hudEl = document.getElementById('hud');
-  const peopleChip = document.getElementById('peopleChip');
-  const resLayer = document.getElementById('result');
-  const resScore = document.getElementById('resScore');
-  const resSummary = document.getElementById('resSummary');
-  const resTips = document.getElementById('resTips');
+      let detector = null;
+      let running = false;
+      let holdStart = null;
+      let lastKeypoints = null;
 
-  let facing = 'user', stream = null, detector = null;
-  let running = false, finalized = false;
-  let holdStart = null;
-  let lastPose = null;
+      // 启动摄像头 + 等待视频就绪
+      async function startCamera() {
+        statusEl.textContent = '📷 请求摄像头…';
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        });
 
-  // 启动摄像头
-  async function startCamera() {
-    statusEl.textContent = '📷 请求摄像头…';
-    if (stream) stream.getTracks().forEach(t => t.stop());
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { facingMode: facing, width: CFG.video.width, height: CFG.video.height }
-    });
-    video.srcObject = stream;
-    await video.play();
-    canvas.width = video.videoWidth || CFG.video.width;
-    canvas.height = video.videoHeight || CFG.video.height;
-  }
+        video.srcObject = stream;
 
-  // 加载模型
-  async function loadModel() {
-    statusEl.textContent = '🧠 加载AI模型（完整版）…';
-    await tf.setBackend(CFG.backend);
-    await tf.ready();
-    detector = await poseDetection.createDetector(
-      poseDetection.SupportedModels.BlazePose,
-      { runtime: 'tfjs', modelType: CFG.poseModelType, enableSmoothing: CFG.smoothing }
-    );
-  }
-
-  // 计算两点距离
-  const dist2d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-
-  // 判断是否双手合十（手腕靠近胸前）
-  function isPraying(kps) {
-    const lw = kps[15], rw = kps[16], ls = kps[11], rs = kps[12];
-    if (!lw || !rw || !ls || !rs) return false;
-    const wristDist = dist2d(lw, rw);
-    const chestDist = (dist2d(lw, ls) + dist2d(rw, rs)) / 2;
-    return wristDist < CFG.PRAYER_WRIST_DIST && chestDist < 150;
-  }
-
-  // 绘制骨架
-  function drawSkeleton(kps) {
-    if (!kps) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const edges = [[11,13],[13,15],[12,14],[14,16],[11,12],[23,24],[11,23],[12,24],[23,25],[25,27],[24,26],[26,28]];
-    ctx.strokeStyle = '#4fc3f7';
-    ctx.lineWidth = 3;
-    for (const [a, b] of edges) {
-      const p = kps[a], q = kps[b];
-      if (p?.score > 0.3 && q?.score > 0.3) {
-        ctx.beginPath();
-        ctx.moveTo(p.x, p.y);
-        ctx.lineTo(q.x, q.y);
-        ctx.stroke();
+        return new Promise((resolve) => {
+          video.onloadedmetadata = () => {
+            canvas.width = video.videoWidth || 640;
+            canvas.height = video.videoHeight || 480;
+            statusEl.textContent = '🧠 加载AI模型…';
+            resolve();
+          };
+        });
       }
-    }
-    ctx.fillStyle = 'red';
-    for (const kp of kps) {
-      if (kp?.score > 0.3) {
-        ctx.beginPath();
-        ctx.arc(kp.x, kp.y, 4, 0, Math.PI * 2);
-        ctx.fill();
+
+      // 加载 BlazePose full 模型
+      async function loadModel() {
+        await tf.setBackend('webgl');
+        await tf.ready();
+        detector = await poseDetection.createDetector(poseDetection.SupportedModels.BlazePose, {
+          runtime: 'tfjs',
+          modelType: 'full',
+          enableSmoothing: true
+        });
       }
-    }
-  }
 
-  // 计算角度
-  function angleDeg(a, b, c) {
-    if (!a || !b || !c) return null;
-    const r = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
-    let d = Math.abs(r * 180 / Math.PI);
-    return d > 180 ? 360 - d : d;
-  }
+      // 计算两点距离
+      const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
-  // 评分
-  function scoreTree(kps) {
-    const lh = kps[23], rh = kps[24], lk = kps[25], rk = kps[26], la = kps[27], ra = kps[28];
-    if (!lh || !rh || !lk || !rk || !la || !ra) return { score: 0, problems: ['关键点不足'] };
+      // 是否双手合十（手腕靠近）
+      function isPraying(kps) {
+        const lw = kps[15], rw = kps[16];
+        return lw && rw && dist(lw, rw) < 60;
+      }
 
-    const LKA = angleDeg(lh, lk, la);
-    const RKA = angleDeg(rh, rk, ra);
-    if (LKA === null || RKA === null) return { score: 0, problems: ['角度计算失败'] };
-
-    const straight = Math.max(LKA, RKA);
-    const bent = Math.min(LKA, RKA);
-    const pelvisTilt = Math.abs(lh.y - rh.y);
-
-    let score = 0;
-    const problems = [];
-
-    if (straight >= CFG.STRAIGHT_MIN) score += 30; else problems.push('站立腿不够直');
-    if (bent <= CFG.BENT_MAX) score += 30; else problems.push('抬腿膝盖未弯曲');
-    if (pelvisTilt < 15) score += 20; else problems.push('骨盆倾斜');
-    score += 20; // 手位已通过合十检测，脚位简化处理
-
-    return { score: Math.min(100, Math.round(score)), problems };
-  }
-
-  // 显示结果
-  function showResult(res) {
-    finalized = true;
-    const s = res.score;
-    resScore.textContent = `${s} 分`;
-    resScore.className = 'score ' + (s >= 80 ? 'ok' : (s >= 60 ? '' : 'bad'));
-    resSummary.textContent = s >= 80 ? '姿势规范，保持良好！' : (s >= 60 ? '基本达标，注意细节调整。' : '未达标，建议根据提示逐项纠正。');
-    resTips.innerHTML = '';
-    (res.problems.length ? res.problems : ['无明显问题']).forEach(t => {
-      const li = document.createElement('li');
-      li.textContent = t;
-      resTips.appendChild(li);
-    });
-    resLayer.style.display = 'flex';
-  }
-
-  // 主循环
-  async function detectLoop() {
-    if (!running) return;
-    const poses = await detector.estimatePoses(video);
-    const numPeople = poses.length;
-    peopleChip.textContent = `人数：${numPeople}`;
-
-    if (numPeople === 0) {
-      hudEl.textContent = '未检测到人体';
-      holdStart = null;
-    } else {
-      const pose = poses[0];
-      lastPose = pose;
-      drawSkeleton(pose.keypoints);
-
-      if (pose.keypoints && isPraying(pose.keypoints)) {
-        if (!holdStart) holdStart = Date.now();
-        const elapsed = (Date.now() - holdStart) / 1000;
-        if (elapsed >= CFG.HOLD_SEC) {
-          running = false;
-          const result = scoreTree(pose.keypoints);
-          showResult(result);
-          return;
+      // 绘制关键点（仅红点，不画线，避免干扰）
+      function drawPoints(kps) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = 'red';
+        for (const kp of kps) {
+          if (kp.score > 0.3) {
+            ctx.beginPath();
+            ctx.arc(kp.x, kp.y, 4, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
-        hudEl.textContent = `✅ 合十检测中… ${Math.ceil(CFG.HOLD_SEC - elapsed)} 秒`;
-      } else {
-        holdStart = null;
-        hudEl.textContent = '请站定并双手合十';
       }
-    }
-    requestAnimationFrame(detectLoop);
-  }
 
-  // 初始化
-  async function init() {
-    try {
-      await startCamera();
-      await loadModel();
-      document.getElementById('overlay').style.display = 'none';
-      running = true;
-      statusEl.textContent = '准备就绪';
-      detectLoop();
-    } catch (err) {
-      console.error(err);
-      statusEl.textContent = '❌ 启动失败：' + (err.message || '未知错误');
-    }
-  }
+      // 计算角度
+      function angle(a, b, c) {
+        if (!a || !b || !c) return null;
+        const ab = Math.hypot(a.x - b.x, a.y - b.y);
+        const bc = Math.hypot(b.x - c.x, b.y - c.y);
+        const ac = Math.hypot(a.x - c.x, a.y - c.y);
+        if (ab === 0 || bc === 0) return null;
+        const cosB = (ab * ab + bc * bc - ac * ac) / (2 * ab * bc);
+        return Math.acos(Math.max(-1, Math.min(1, cosB))) * 180 / Math.PI;
+      }
 
-  // 按钮绑定
-  document.getElementById('startBtn').addEventListener('click', init);
-  document.getElementById('resetBtn').addEventListener('click', () => location.reload());
-  document.getElementById('freezeBtn').addEventListener('click', () => {
-    if (lastPose?.keypoints && !finalized) {
-      showResult(scoreTree(lastPose.keypoints));
-      running = false;
-    }
-  });
-  document.getElementById('retryBtn').onclick = () => {
-    resLayer.style.display = 'none';
-    finalized = false;
-    holdStart = null;
-    running = true;
-    detectLoop();
-  };
-  document.getElementById('closeBtn').onclick = () => {
-    resLayer.style.display = 'none';
-  };
-})();
-</script>
+      // 评分
+      function evaluate(kps) {
+        const LKA = angle(kps[23], kps[25], kps[27]); // 左腿
+        const RKA = angle(kps[24], kps[26], kps[28]); // 右腿
+        if (LKA === null || RKA === null) return { score: 0, msg: '腿部关键点缺失' };
+
+        const straight = Math.max(LKA, RKA);
+        const bent = Math.min(LKA, RKA);
+        let score = 0;
+        if (straight > 165) score += 50;
+        if (bent < 120) score += 50;
+        return { score: Math.min(100, Math.round(score)), msg: '' };
+      }
+
+      // 显示结果
+      function showResult(score, msg) {
+        scoreEl.textContent = score + ' 分';
+        summaryEl.textContent = msg || (score >= 80 ? '优秀！' : score >= 60 ? '良好' : '需改进');
+        resultDiv.style.display = 'flex';
+        running = false;
+      }
+
+      // 主循环
+      async function loop() {
+        if (!running) return;
+        const poses = await detector.estimatePoses(video);
+        if (poses.length === 0) {
+          hudEl.textContent = '未检测到人体';
+          holdStart = null;
+        } else {
+          const kps = poses[0].keypoints;
+          lastKeypoints = kps;
+          drawPoints(kps);
+
+          if (isPraying(kps)) {
+            if (!holdStart) holdStart = Date.now();
+            const elapsed = (Date.now() - holdStart) / 1000;
+            if (elapsed >= 5) {
+              const res = evaluate(kps);
+              showResult(res.score, res.msg);
+              return;
+            }
+            hudEl.textContent = `✅ 合十中：${Math.ceil(5 - elapsed)} 秒`;
+          } else {
+            holdStart = null;
+            hudEl.textContent = '请双手合十于胸前';
+          }
+        }
+        requestAnimationFrame(loop);
+      }
+
+      // 初始化流程
+      async function init() {
+        try {
+          await startCamera();
+          await loadModel();
+          document.getElementById('overlay').style.display = 'none';
+          running = true;
+          statusEl.textContent = '准备就绪';
+          loop();
+        } catch (err) {
+          console.error(err);
+          statusEl.textContent = '❌ 错误：' + (err.message || '启动失败');
+          alert('错误：' + (err.message || '请重试'));
+        }
+      }
+
+      startBtn.onclick = init;
+      againBtn.onclick = () => {
+        resultDiv.style.display = 'none';
+        holdStart = null;
+        running = true;
+        loop();
+      };
+    })();
+  </script>
 </body>
 </html>
