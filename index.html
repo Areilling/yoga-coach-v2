@@ -12,7 +12,7 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
       font-family: "PingFang SC", sans-serif;
-      background: #121212;
+      background: #000;
       color: white;
       overflow: hidden;
       touch-action: none;
@@ -34,7 +34,7 @@
       flex-direction: column;
       justify-content: center;
       align-items: center;
-      background: rgba(0,0,0,0.9);
+      background: rgba(0,0,0,0.95);
       z-index: 10;
     }
     #startBtn {
@@ -77,20 +77,33 @@
     const overlay = document.getElementById('overlay');
     const startBtn = document.getElementById('startBtn');
 
+    // 全局变量
+    let detector = null;
+
+    // 用户点击后才初始化一切
     startBtn.addEventListener('click', async () => {
       try {
-        overlay.innerHTML = '<div style="color:white;font-size:20px;">⏳ 正在启动摄像头...</div>';
+        // 第一步：获取摄像头（必须在用户手势后）
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'user', width: 640, height: 480 },
           audio: false
         });
+
+        // 第二步：绑定流
         video.srcObject = stream;
         video.style.display = 'block';
         overlay.style.display = 'none';
-        await loadModel();
+
+        // 第三步：强制播放（关键！）
+        await video.play();
+
+        // 第四步：加载模型（延迟加载，避免卡顿）
+        loadModelAndDetect();
       } catch (err) {
+        console.error(err);
         overlay.innerHTML = `<div style="color:#ff6b6b;font-size:18px;text-align:center;">
-          ❌ 摄像头被拒绝<br>
+          ❌ 无法访问摄像头<br>
+          <span style="font-size:14px;color:#ccc;">请检查微信权限</span>
           <button id="retryBtn" style="margin-top:15px;background:#ff6b6b;color:white;border:none;padding:10px 20px;border-radius:8px;">
             重试
           </button>
@@ -99,36 +112,42 @@
       }
     });
 
-    async function loadModel() {
+    async function loadModelAndDetect() {
       const status = document.createElement('div');
       status.id = 'status';
       status.style.cssText = 'position:absolute;top:20px;width:100%;text-align:center;color:#4fc3f7;font-size:18px;z-index:20;';
       document.body.appendChild(status);
       status.textContent = '⏳ 加载AI模型...';
 
-      await tf.setBackend('webgl');
-      const detector = await poseDetection.createDetector(
-        poseDetection.SupportedModels.BlazePose,
-        { runtime: 'tfjs', modelType: 'lite' }
-      );
+      try {
+        await tf.setBackend('webgl');
+        detector = await poseDetection.createDetector(
+          poseDetection.SupportedModels.BlazePose,
+          { runtime: 'tfjs', modelType: 'lite' }
+        );
+        status.textContent = '✅ 准备就绪！请做瑜伽...';
 
-      status.textContent = '✅ 准备就绪！请做瑜伽...';
+        const feedback = document.createElement('div');
+        feedback.id = 'feedback';
+        feedback.style.cssText = 'position:absolute;top:60px;width:100%;text-align:center;color:white;font-size:20px;z-index:20;';
+        document.body.appendChild(feedback);
 
-      const feedback = document.createElement('div');
-      feedback.id = 'feedback';
-      feedback.style.cssText = 'position:absolute;top:60px;width:100%;text-align:center;color:white;font-size:20px;z-index:20;';
-      document.body.appendChild(feedback);
-
-      const detect = async () => {
-        const poses = await detector.estimatePoses(video);
-        if (poses.length > 0 && poses[0].keypoints) {
-          evaluatePose(poses[0].keypoints, feedback);
-        } else {
-          feedback.textContent = '未检测到人体';
-        }
-        requestAnimationFrame(detect);
-      };
-      detect();
+        // 开始检测
+        const detect = async () => {
+          if (!detector) return;
+          const poses = await detector.estimatePoses(video);
+          if (poses.length > 0 && poses[0].keypoints) {
+            evaluatePose(poses[0].keypoints, feedback);
+          } else {
+            feedback.textContent = '未检测到人体，请对准镜头';
+          }
+          requestAnimationFrame(detect);
+        };
+        detect();
+      } catch (e) {
+        console.error(e);
+        status.textContent = '❌ AI模型加载失败';
+      }
     }
 
     function calculateAngle(a, b, c) {
