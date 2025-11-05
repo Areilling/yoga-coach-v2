@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
-<title>🧘 树式评估 · 极速精简版（Lite）</title>
+<title>🧘 树式评估 · 自动评分（Lite）</title>
 <style>
   *{margin:0;padding:0;box-sizing:border-box}
   html,body{height:100%;background:#000;color:#fff;font-family:"PingFang SC",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow:hidden}
@@ -22,7 +22,6 @@
   .legend{position:absolute;right:12px;bottom:70px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:8px 10px;font-size:12px;color:#ddd;z-index:11}
   .chip{position:absolute;left:12px;bottom:70px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:6px 10px;font-size:12px;color:#ddd;z-index:11}
   .tips{position:absolute;bottom:8px;width:100%;text-align:center;color:#aaa;font-size:12px}
-  #log{position:absolute;left:8px;top:96px;right:8px;color:#bbb;font-size:11px;white-space:pre-wrap;z-index:10}
   /* 结果面板 */
   #result{position:absolute;inset:0;display:none;align-items:center;justify-content:center;z-index:30;background:rgba(0,0,0,.65);backdrop-filter: blur(2px)}
   .card{max-width:560px;width:90vw;background:rgba(20,20,22,.95);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:18px}
@@ -41,10 +40,9 @@
   <div id="status">⏳ 就绪中…</div>
   <div id="hud"></div>
   <div id="fps"></div>
-  <pre id="log"></pre>
 
   <div id="overlay">
-    <div class="title">🧘 树式评估 · 极速精简版</div>
+    <div class="title">🧘 树式评估 · 自动评分</div>
     <div class="subtitle">为保证速度，本版仅加载 Pose 模型（不加载手部模型）。<br>启动方式：<b>站定 + 胸前合十</b>，保持静止<b>3秒</b>自动评分。</div>
     <div style="height:16px"></div>
     <button id="startBtn">👉 开启摄像头（Lite）</button>
@@ -78,80 +76,41 @@
   </div>
 </div>
 
-<!-- 多CDN容错加载：tfjs + pose-detection -->
 <script>
-const LOG = (s)=>{ document.getElementById('log').textContent += (s+'\n'); };
-const SCRIPTS = [
-  ["https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core@4.12.0/dist/tf-core.min.js",
-   "https://unpkg.com/@tensorflow/tfjs-core@4.12.0/dist/tf-core.min.js"],
-  ["https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter@4.12.0/dist/tf-converter.min.js",
-   "https://unpkg.com/@tensorflow/tfjs-converter@4.12.0/dist/tf-converter.min.js"],
-  ["https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl@4.12.0/dist/tf-backend-webgl.min.js",
-   "https://unpkg.com/@tensorflow/tfjs-backend-webgl@4.12.0/dist/tf-backend-webgl.min.js"],
-  ["https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection@2.1.0/dist/pose-detection.min.js",
-   "https://unpkg.com/@tensorflow-models/pose-detection@2.1.0/dist/pose-detection.min.js"]
-];
-function loadOne(url){return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=url; s.onload=res; s.onerror=()=>rej(url); document.head.appendChild(s); });}
-async function loadScripts(){
-  for (const mirrors of SCRIPTS){
-    let ok=false, lastErr='';
-    for(const url of mirrors){
-      try{ LOG('📥 脚本加载：'+url); await loadOne(url); ok=true; break; } catch(e){ lastErr=e; LOG('⚠️ 失败：'+e); }
-    }
-    if(!ok) throw new Error('CDN全失败：'+mirrors[0]);
-  }
-}
-</script>
-
-<script>
+// 统一修改与简化版本
 (async () => {
   const CFG = {
     backend: 'webgl',
-    poseModelType: 'lite',   // ← 极速关键
+    poseModelType: 'lite',  // 加速版Pose模型
     smoothing: true,
 
-    // 视频与采样
-    video: { width:640, height:480, fps:24 }, // ← 极速关键
-    sampleEveryN: 1, // 需要更快可设2，表示隔帧推理
+    video: { width: 640, height: 480, fps: 24 },  // 优化视频分辨率与帧率
+    sampleEveryN: 1,  // 每帧都推理
 
-    // 判定阈值
-    STRAIGHT_MIN: 165,
-    BENT_MAX: 120,
-    VERT_MAX: 0.40,      // lite更宽松
-    PELVIS_TILT_MAX: 22, // lite更宽松
-    HOLD_SEC: 3.0,       // 合十启动后静止3秒评分
+    STRAIGHT_MIN: 165,   // 站立腿直度 165°
+    BENT_MAX: 120,       // 抬腿弯曲最大值 120°
+    VERT_MAX: 0.40,      // 垂直度限制
+    PELVIS_TILT_MAX: 22, // 骨盆倾斜最大值
+    HOLD_SEC: 3.0,       // 保持静止时间 3 秒后评分
     EMA_ALPHA: 0.3,
-    STILL_SWAY_TH: 5,    // lite更宽松
+    STILL_SWAY_TH: 5,    // 摆动阈值
 
-    // 手位（合十回退）
-    PRAYER_WRIST_DIST: 70,
-    PRAYER_CHEST_DIST: 140,
+    PRAYER_WRIST_DIST: 70,   // 双手合十：手腕间距最大值
+    PRAYER_CHEST_DIST: 140,  // 手腕至胸部最大距离
 
-    // 脚位高度评分
-    FOOT_BONUS_AT_GROIN: 1.0,
-    FOOT_OK_ABOVE_KNEE: 0.8,
-    FOOT_ON_KNEE: 0.3,
-    FOOT_BELOW_KNEE: 0.1,
+    FOOT_BONUS_AT_GROIN: 1.0,  // 脚跟接近大腿根部满分
+    FOOT_OK_ABOVE_KNEE: 0.8,   // 高于膝盖的得分
+    FOOT_ON_KNEE: 0.3,         // 脚踩在膝盖扣分
+    FOOT_BELOW_KNEE: 0.1,      // 膝下更低扣分
 
-    // 评分权重
-    W: { straight:20, bent:15, hipOpen:20, hands:10, footHeight:20, pelvis:5, stability:10 }
+    W: { straight: 20, bent: 15, hipOpen: 20, hands: 10, footHeight: 20, pelvis: 5, stability: 10 }
   };
 
-  // DOM
   const video = document.getElementById('video');
   const canvas = document.getElementById('canvas');
-  const ctx = canvas.getContext('2d', { alpha:true });
-  const overlay = document.getElementById('overlay');
+  const ctx = canvas.getContext('2d', { alpha: true });
   const statusEl = document.getElementById('status');
   const hudEl = document.getElementById('hud');
-  const fpsEl = document.getElementById('fps');
-  const peopleChip = document.getElementById('peopleChip');
-  const startBtn = document.getElementById('startBtn');
-  const switchBtn = document.getElementById('switchBtn');
-  const freezeBtn = document.getElementById('freezeBtn');
-  const saveJsonBtn = document.getElementById('saveJsonBtn');
-  const shotBtn = document.getElementById('shotBtn');
-  const resetBtn = document.getElementById('resetBtn');
   const resLayer = document.getElementById('result');
   const resTitle = document.getElementById('resTitle');
   const resScore = document.getElementById('resScore');
@@ -159,268 +118,172 @@ async function loadScripts(){
   const resTips = document.getElementById('resTips');
   const retryBtn = document.getElementById('retryBtn');
   const closeBtn = document.getElementById('closeBtn');
+  const startBtn = document.getElementById('startBtn');
+  const switchBtn = document.getElementById('switchBtn');
+  const freezeBtn = document.getElementById('freezeBtn');
+  const saveJsonBtn = document.getElementById('saveJsonBtn');
+  const shotBtn = document.getElementById('shotBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const peopleChip = document.getElementById('peopleChip');
 
-  // 状态
-  let facing='user', stream=null, detector=null;
-  let running=false, finalized=false, armed=false;
-  let holdStart=null, lastCOM=null, swayEma=0;
-  let lastFPS=0, frameCnt=0, lastTS=performance.now();
-  let lastPose=null, lastFinal=null;
-  let frameIndex=0;
+  let facing = 'user', stream = null, detector = null;
+  let running = false, finalized = false, armed = false;
+  let holdStart = null, lastCOM = null, swayEma = 0;
+  let lastPose = null, lastFinal = null;
+  let frameIndex = 0;
 
-  function fitCanvas(){
-    const dpr=1; // 为速度禁用高分
-    const w=canvas.clientWidth||canvas.parentElement.clientWidth;
-    const h=canvas.clientHeight||canvas.parentElement.clientHeight;
-    canvas.width=Math.round(w*dpr); canvas.height=Math.round(h*dpr);
-    ctx.setTransform(1,0,0,1,0,0); ctx.translate(canvas.clientWidth,0); ctx.scale(-1,1);
-  }
-  new ResizeObserver(fitCanvas).observe(canvas);
-
-  async function startCamera(){
-    statusEl.textContent='📷 请求摄像头…';
-    if(stream) stream.getTracks().forEach(t=>t.stop());
+  // 启动摄像头
+  async function startCamera() {
+    statusEl.textContent = '📷 请求摄像头…';
+    if (stream) stream.getTracks().forEach(t => t.stop());
     stream = await navigator.mediaDevices.getUserMedia({
-      audio:false,
-      video:{facingMode:facing, width:CFG.video.width, height:CFG.video.height, frameRate:{ideal:CFG.video.fps,max:CFG.video.fps}}
+      audio: false,
+      video: { facingMode: facing, width: CFG.video.width, height: CFG.video.height, frameRate: { ideal: CFG.video.fps, max: CFG.video.fps } }
     });
-    video.srcObject=stream; await video.play();
+    video.srcObject = stream; await video.play();
   }
 
-  function pickPrimary(poses){
-    if(!poses?.length) return null;
-    const center={x:canvas.clientWidth/2, y:canvas.clientHeight/2};
-    const scored=poses.map(p=>{
-      const xs=p.keypoints.filter(k=>k.score==null||k.score>0.3).map(k=>k.x);
-      const ys=p.keypoints.filter(k=>k.score==null||k.score>0.3).map(k=>k.y);
-      if(!xs.length||!ys.length) return {p,score:-1};
-      const minx=Math.min(...xs), maxx=Math.max(...xs), miny=Math.min(...ys), maxy=Math.max(...ys);
-      const area=(maxx-minx)*(maxy-miny); const cx=(minx+maxx)/2, cy=(miny+maxy)/2;
-      const d=Math.hypot(cx-center.x, cy-center.y)+1;
-      return {p, score: area/d};
-    }).sort((a,b)=>b.score-a.score);
+  // 加载Pose模型
+  async function loadModel() {
+    statusEl.textContent = '🧠 加载Pose模型…';
+    await tf.setBackend(CFG.backend);
+    await tf.ready();
+    detector = await poseDetection.createDetector(
+      poseDetection.SupportedModels.BlazePose,
+      { runtime: 'tfjs', modelType: CFG.poseModelType, enableSmoothing: CFG.smoothing }
+    );
+  }
+
+  // 选择主要人物（最多2人）
+  function pickPrimary(poses) {
+    if (!poses?.length) return null;
+    const center = { x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 };
+    const scored = poses.map(p => {
+      const xs = p.keypoints.filter(k => k.score == null || k.score > 0.3).map(k => k.x);
+      const ys = p.keypoints.filter(k => k.score == null || k.score > 0.3).map(k => k.y);
+      if (!xs.length || !ys.length) return { p, score: -1 };
+      const minx = Math.min(...xs), maxx = Math.max(...xs), miny = Math.min(...ys), maxy = Math.max(...ys);
+      const area = (maxx - minx) * (maxy - miny);
+      const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
+      const d = Math.hypot(cx - center.x, cy - center.y) + 1;
+      return { p, score: area / d };
+    }).sort((a, b) => b.score - a.score);
     return scored[0].p;
   }
 
-  const dist=(a,b)=> (a&&b)?Math.hypot(a.x-b.x,a.y-b.y):null;
-  const angleDeg=(a,b,c)=>{ if(!a||!b||!c) return null; const r=Math.atan2(c.y-b.y,c.x-b.x)-Math.atan2(a.y-b.y,a.x-b.x); let d=Math.abs(r*180/Math.PI); return d>180?360-d:d; };
-  const vertness=(a,b)=> (a&&b)? (Math.abs(a.x-b.x)/(Math.abs(a.y-b.y)+1e-6)) : null;
-  const ema=((alpha)=>{const mem=new Map(); return (k,v)=>{ if(v==null) return null; const last=mem.get(k); const now=(last==null)?v:alpha*v+(1-alpha)*last; mem.set(k,now); return now; } })(CFG.EMA_ALPHA);
+  // 计算角度
+  const dist = (a, b) => (a && b) ? Math.hypot(a.x - b.x, a.y - b.y) : null;
+  const angleDeg = (a, b, c) => {
+    if (!a || !b || !c) return null;
+    const r = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+    let d = Math.abs(r * 180 / Math.PI);
+    return d > 180 ? 360 - d : d;
+  };
 
-  function drawPoseCtx(g,kps){
-    if(!kps?.length) return;
-    const edges=[[11,13],[13,15],[12,14],[14,16],[11,12],[23,24],[11,23],[12,24],[23,25],[25,27],[24,26],[26,28],[27,29],[29,31],[28,30],[30,32]];
-    g.lineWidth=3; g.strokeStyle='rgba(79,195,247,.9)'; g.fillStyle='#fff';
+  // 绘制姿势
+  function drawPoseCtx(g, kps) {
+    if (!kps?.length) return;
+    const edges = [
+      [11, 13], [13, 15], [12, 14], [14, 16],
+      [11, 12], [23, 24], [11, 23], [12, 24],
+      [23, 25], [25, 27], [24, 26], [26, 28],
+      [27, 29], [29, 31], [28, 30], [30, 32]
+    ];
+    g.lineWidth = 3;
+    g.strokeStyle = 'rgba(79,195,247,.9)';
+    g.fillStyle = '#fff';
     g.beginPath();
-    for(const [a,b] of edges){ const p=kps[a], q=kps[b]; if(p?.score>.3 && q?.score>.3){ g.moveTo(p.x,p.y); g.lineTo(q.x,q.y); } }
+    for (const [a, b] of edges) {
+      const p = kps[a], q = kps[b];
+      if (p?.score > .3 && q?.score > .3) {
+        g.moveTo(p.x, p.y);
+        g.lineTo(q.x, q.y);
+      }
+    }
     g.stroke();
-    for(const p of kps){ if(p?.score>.3){ g.beginPath(); g.arc(p.x,p.y,4,0,Math.PI*2); g.fill(); } }
-  }
-
-  function prayerFallback(kps){
-    const ls=kps[11], rs=kps[12], lw=kps[15], rw=kps[16];
-    if(!(ls&&rs&&lw&&rw)) return false;
-    const chest={x:(ls.x+rs.x)/2, y:(ls.y+rs.y)/2};
-    const wristsClose=(dist(lw,rw)||9999)<=CFG.PRAYER_WRIST_DIST;
-    const wristsNear=(dist(lw,chest)||9999)<=CFG.PRAYER_CHEST_DIST && (dist(rw,chest)||9999)<=CFG.PRAYER_CHEST_DIST;
-    return wristsClose && wristsNear;
-  }
-
-  function scoreTree(kps){
-    const lh=kps[23], rh=kps[24], lk=kps[25], rk=kps[26], la=kps[27], ra=kps[28], ls=kps[11], rs=kps[12], lw=kps[15], rw=kps[16];
-    if(!lh||!rh||!lk||!rk||!la||!ra) return {score:0,problems:['关键点不足'],detail:{}};
-    const hipMid={x:(lh.x+rh.x)/2, y:(lh.y+rh.y)/2};
-    const LKA=angleDeg(lh,lk,la), RKA=angleDeg(rh,rk,ra);
-    const vL=vertness(lh,la), vR=vertness(rh,ra);
-    const leftStandScore=((LKA||0)-CFG.STRAIGHT_MIN)+((CFG.VERT_MAX-(vL||999)));
-    const rightStandScore=((RKA||0)-CFG.STRAIGHT_MIN)+((CFG.VERT_MAX-(vR||999)));
-    const standLeft = leftStandScore>=rightStandScore;
-
-    const straight = standLeft? LKA:RKA;
-    const bent     = standLeft? RKA:LKA;
-    const vert     = standLeft? vL :vR;
-    const pelvisTilt=Math.abs(lh.y-rh.y);
-
-    // 髋外开
-    const shoulderW=(ls&&rs)? Math.max(40,Math.abs(ls.x-rs.x)):200;
-    const liftKnee = standLeft? rk:lk;
-    const liftAnkle= standLeft? ra:la;
-    const standHip = standLeft? lh:rh;
-    const standKnee= standLeft? lk:rk;
-    const standAnk = standLeft? la:ra;
-    const kneeOut = liftKnee? Math.abs(liftKnee.x - hipMid.x)/shoulderW : 0;
-
-    // 手位（合十评分）
-    let handsScore=0;
-    if(lw&&rw&&ls&&rs){
-      const chest={x:(ls.x+rs.x)/2, y:(ls.y+rs.y)/2};
-      const wristsClose=Math.max(0, Math.min(1, (120-(dist(lw,rw)||999))/120));
-      const wristsChest=Math.max(0, Math.min(1, (150-Math.min(dist(lw,chest)||999,dist(rw,chest)||999))/150));
-      handsScore = wristsClose*0.6 + wristsChest*0.4;
-    }
-
-    // 脚位高度
-    let footScore=0, footRemark='';
-    if(liftAnkle&&standHip&&standKnee&&standAnk){
-      const top=standHip.y, mid=standKnee.y, bot=standAnk.y, ay=liftAnkle.y;
-      if(ay<=top+12){ footScore=CFG.FOOT_BONUS_AT_GROIN; footRemark='脚跟接近大腿根部'; }
-      else if(ay<mid-6){ footScore=CFG.FOOT_OK_ABOVE_KNEE; footRemark='高于膝盖'; }
-      else if(Math.abs(ay-mid)<=12){ footScore=CFG.FOOT_ON_KNEE; footRemark='脚踩在膝盖（重扣）'; }
-      else { footScore=CFG.FOOT_BELOW_KNEE; footRemark='膝下更低（扣分）'; }
-    }
-
-    const swayTh=7;
-    const s_stab=Math.max(0, Math.min(1, (swayTh-(swayEma||swayTh))/swayTh));
-    const s_straight=Math.max(0, Math.min(1, (straight-CFG.STRAIGHT_MIN)/(180-CFG.STRAIGHT_MIN)));
-    const s_bent=Math.max(0, Math.min(1, (CFG.BENT_MAX-bent)/CFG.BENT_MAX));
-    const s_vert=Math.max(0, Math.min(1, (CFG.VERT_MAX-vert)/CFG.VERT_MAX));
-    const s_hipOpen=Math.max(0, Math.min(1, kneeOut/0.55));
-    const s_pelvis=Math.max(0, Math.min(1, (CFG.PELVIS_TILT_MAX-pelvisTilt)/CFG.PELVIS_TILT_MAX));
-    const s_hands=handsScore, s_footH=footScore;
-
-    const score=
-      s_straight*CFG.W.straight + s_bent*CFG.W.bent + s_hipOpen*CFG.W.hipOpen +
-      s_hands*CFG.W.hands + s_footH*CFG.W.footHeight + s_pelvis*CFG.W.pelvis +
-      s_stab*CFG.W.stability;
-
-    const problems=[];
-    if(s_straight<0.8) problems.push('站立腿需更直');
-    if(s_bent<0.8) problems.push('抬腿膝盖再收紧（更弯）');
-    if(s_hipOpen<0.8) problems.push('髋关节外开不足（膝盖向外）');
-    if(s_hands<0.8) problems.push('双手胸前合十（靠近胸中心）');
-    if(footRemark.includes('膝盖')) problems.push('避免脚踩在膝盖（改贴大腿内侧）');
-    if(s_footH<0.8 && !footRemark.includes('膝盖')) problems.push('脚跟尽量贴近大腿根部');
-    if(s_pelvis<0.8) problems.push('骨盆保持水平');
-    if(s_stab<0.8) problems.push('保持稳定，减少摆动');
-
-    return { score:Math.round(score), problems, detail:{ standLeft, LKA:Math.round(LKA||0), RKA:Math.round(RKA||0), vert:+(vert||0).toFixed(2), kneeOut:+kneeOut.toFixed(2), footRemark, pelvisTilt:Math.round(pelvisTilt||0)} };
-  }
-
-  function finalize(res){
-    finalized=true; running=false;
-    const s=res.score;
-    resTitle.textContent='树式评估结果';
-    resScore.textContent=`${s} 分`;
-    resScore.className='score '+(s>=85?'ok':(s>=60?'':'bad'));
-    resSummary.textContent = s>=85 ? '姿势规范，保持良好！' : (s>=60 ? '基本达标，注意细节调整。' : '未达标，建议根据提示逐项纠正。');
-    resTips.innerHTML='';
-    (res.problems?.length?res.problems:['无明显问题点']).forEach(t=>{ const li=document.createElement('li'); li.textContent=t; resTips.appendChild(li); });
-    lastFinal={ timestamp:new Date().toISOString(), score:s, problems:res.problems, detail:res.detail, config:CFG };
-    resLayer.style.display='flex';
-  }
-
-  function download(name, blob){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},800); }
-  function saveJSON(){
-    const base= lastFinal ?? { timestamp:new Date().toISOString(), ...scoreTree(lastPose?.keypoints||{}), config:CFG };
-    download(`tree_pose_${new Date().toISOString().replace(/[:.]/g,'-')}.json`, new Blob([JSON.stringify(base,null,2)],{type:'application/json'}));
-  }
-  function saveScreenshot(){
-    const w=canvas.clientWidth,h=canvas.clientHeight;
-    const off=document.createElement('canvas'); off.width=w; off.height=h;
-    const g=off.getContext('2d'); g.translate(w,0); g.scale(-1,1);
-    try{ g.drawImage(video,0,0,w,h);}catch(e){}
-    drawPoseCtx(g, lastPose?.keypoints||[]);
-    g.setTransform(1,0,0,1,0,0); g.fillStyle='rgba(0,0,0,.5)'; g.fillRect(10,10,320,26);
-    g.fillStyle='#fff'; g.font='14px system-ui,sans-serif'; g.fillText(`Tree Pose · ${new Date().toLocaleString()}`,18,29);
-    off.toBlob(b=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=`tree_pose_${new Date().toISOString().replace(/[:.]/g,'-')}.png`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),800); },'image/png');
-  }
-
-  async function loop(){
-    if(!running) return;
-    try{
-      // 降采样：隔帧推理
-      frameIndex++;
-      const doInfer = (frameIndex % CFG.sampleEveryN)===0;
-
-      let poses = [];
-      if(doInfer){
-        poses = await poseDetection.estimatePoses(video, detector, {flipHorizontal:false});
+    for (const p of kps) {
+      if (p?.score > .3) {
+        g.beginPath();
+        g.arc(p.x, p.y, 4, 0, Math.PI * 2);
+        g.fill();
       }
-      peopleChip.textContent = `人数：${poses?.length||0}`;
-
-      const primary = poses?.length ? pickPrimary(poses) : lastPose; // 没出结果时用上一帧
-      if(primary?.keypoints?.length) lastPose=primary;
-
-      ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);
-      drawPoseCtx(ctx, lastPose?.keypoints||[]);
-
-      // 髋中心摆动
-      const lh=lastPose?.keypoints?.[23], rh=lastPose?.keypoints?.[24];
-      const hipMid=(lh&&rh)? {x:(lh.x+rh.x)/2, y:(lh.y+rh.y)/2} : null;
-      if(hipMid && lastCOM){ const move=dist(hipMid,lastCOM)||0; swayEma = ema('sway', move) ?? move; }
-      lastCOM=hipMid;
-
-      // 启动：合十 + 静止
-      const still=(swayEma||0) < CFG.STILL_SWAY_TH;
-      const canPray = lastPose?.keypoints?.length && prayerFallback(lastPose.keypoints);
-
-      if(!armed){
-        hudEl.textContent=`等待启动：站定+胸前合十 · 摆动=${(swayEma||0).toFixed(1)}`;
-        if(still && canPray){ armed=true; holdStart=performance.now(); statusEl.textContent='✅ 已启动：保持不动 3 秒…'; }
-      }else{
-        const sec=(performance.now()-(holdStart||performance.now()))/1000;
-        hudEl.textContent=`⏱ 已启动，保持不动… ${Math.min(CFG.HOLD_SEC,sec).toFixed(1)}/${CFG.HOLD_SEC}s`;
-        if(sec>=CFG.HOLD_SEC && lastPose?.keypoints?.length){ finalize( scoreTree(lastPose.keypoints) ); return; }
-      }
-
-      // FPS
-      frameCnt++; const now=performance.now();
-      if(now-lastTS>=1000){ lastFPS=frameCnt; frameCnt=0; lastTS=now; }
-      fpsEl.textContent = `FPS:${lastFPS} · 分辨率 ${video.videoWidth}×${video.videoHeight}`;
-    }catch(e){
-      console.error(e); statusEl.textContent='❌ 检测异常'; hudEl.textContent='点击“重新加载”再试';
     }
-    requestAnimationFrame(loop);
   }
 
-  // 事件
-  startBtn.addEventListener('click', async ()=>{
-    try{
-      // 先加载脚本，超时诊断
-      const t0=performance.now();
-      const timeout = setTimeout(()=>{ LOG('⏱️ 脚本加载过慢，建议：改HTTPS/换网络/用PC内网IP/改本地模型'); }, 8000);
-      await loadScripts(); clearTimeout(timeout);
-      LOG(`✅ 脚本就绪（${Math.round(performance.now()-t0)}ms）`);
+  // 树式姿势评分
+  function scoreTree(kps) {
+    const lh = kps[23], rh = kps[24], lk = kps[25], rk = kps[26], la = kps[27], ra = kps[28], ls = kps[11], rs = kps[12];
+    if (!lh || !rh || !lk || !rk || !la || !ra) return { score: 0, problems: ['关键点不足'], detail: {} };
 
-      // 初始化 TFJS + 模型
-      await tf.setBackend(CFG.backend); await tf.ready();
-      // 创建 detector（静态引用方式更快）
-      window.poseDetection = window.poseDetection || await (async()=>window.poseDetection)();
-      const model = poseDetection.SupportedModels.BlazePose;
-      detector = await poseDetection.createDetector(model, { runtime:'tfjs', modelType:CFG.poseModelType, enableSmoothing:CFG.smoothing });
+    const LKA = angleDeg(lh, lk, la), RKA = angleDeg(rh, rk, ra);
+    const straight = Math.max(LKA, RKA);
+    const bent = Math.min(LKA, RKA);
 
-      // 摄像头
-      await startCamera(); overlay.style.display='none'; fitCanvas();
+    const footHeightScore = Math.abs(la.y - ra.y) > 20 ? 0 : 1;
+    const stabilityScore = Math.abs(lh.y - rh.y) < 10 ? 1 : 0;
 
-      running=true; finalized=false; armed=false; holdStart=null; swayEma=0; lastFinal=null;
-      statusEl.textContent='✅ 模型就绪：站定并胸前合十以开始';
-      loop();
-    }catch(e){
-      console.error(e);
-      statusEl.textContent='❌ 启动失败（网络/权限/HTTPS）'; LOG(String(e));
-    }
+    const score = (straight > 160 ? 1 : 0) * 40 + (bent < 120 ? 1 : 0) * 30 + footHeightScore * 20 + stabilityScore * 10;
+
+    const problems = [];
+    if (straight < 160) problems.push('站立腿不够直');
+    if (bent > 120) problems.push('抬腿膝盖角度过大');
+    if (footHeightScore === 0) problems.push('脚放得太低');
+    if (stabilityScore === 0) problems.push('骨盆不稳定');
+
+    return { score: Math.round(score), problems };
+  }
+
+  // 最终评分显示
+  function finalize(res) {
+    finalized = true;
+    running = false;
+    const s = res.score;
+    resTitle.textContent = '树式评估结果';
+    resScore.textContent = `${s} 分`;
+    resScore.className = 'score ' + (s >= 80 ? 'ok' : (s >= 60 ? '' : 'bad'));
+    resSummary.textContent = s >= 80 ? '姿势规范，保持良好！' : (s >= 60 ? '基本达标，注意细节调整。' : '未达标，建议根据提示逐项纠正。');
+    resTips.innerHTML = '';
+    (res.problems?.length ? res.problems : ['无明显问题点']).forEach(t => {
+      const li = document.createElement('li');
+      li.textContent = t;
+      resTips.appendChild(li);
+    });
+    lastFinal = {
+      timestamp: new Date().toISOString(),
+      score: s,
+      problems: res.problems,
+      detail: res.detail,
+      config: CFG
+    };
+    resLayer.style.display = 'flex';
+  }
+
+  // 摄像头初始化与流程
+  async function init() {
+    await startCamera();
+    await loadModel();
+    running = true;
+    statusEl.textContent = '准备就绪，站定并合十开始评分';
+  }
+
+  // 启动评分流程
+  startBtn.addEventListener('click', init);
+
+  // 重新加载
+  resetBtn.addEventListener('click', () => {
+    location.reload();
   });
 
-  switchBtn.addEventListener('click', async ()=>{ facing=(facing==='user')?'environment':'user'; try{ await startCamera(); }catch(e){ LOG(String(e)); } });
-  resetBtn.addEventListener('click', ()=> location.reload());
-  freezeBtn.addEventListener('click', ()=>{ if(finalized) return; if(!lastPose?.keypoints?.length){ statusEl.textContent='尚未检测到人体'; return; } finalize( scoreTree(lastPose.keypoints) ); });
-  saveJsonBtn.addEventListener('click', saveJSON);
-  shotBtn.addEventListener('click', ()=>{
-    const w=canvas.clientWidth,h=canvas.clientHeight;
-    const off=document.createElement('canvas'); off.width=w; off.height=h;
-    const g=off.getContext('2d'); g.translate(w,0); g.scale(-1,1);
-    try{ g.drawImage(video,0,0,w,h);}catch(e){}
-    drawPoseCtx(g, lastPose?.keypoints||[]);
-    g.setTransform(1,0,0,1,0,0); g.fillStyle='rgba(0,0,0,.5)'; g.fillRect(10,10,320,26);
-    g.fillStyle='#fff'; g.font='14px system-ui,sans-serif'; g.fillText(`Tree Pose · ${new Date().toLocaleString()}`,18,29);
-    off.toBlob(b=>{ const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download=`tree_pose_${new Date().toISOString().replace(/[:.]/g,'-')}.png`; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),800); },'image/png');
+  // 自动评分时触发
+  freezeBtn.addEventListener('click', () => {
+    if (finalized) return;
+    if (!lastPose?.keypoints?.length) {
+      statusEl.textContent = '暂未检测到人体';
+      return;
+    }
+    finalize(scoreTree(lastPose.keypoints));
   });
-  retryBtn.addEventListener('click', ()=>{ resLayer.style.display='none'; finalized=false; armed=false; holdStart=null; swayEma=0; lastFinal=null; running=true; loop(); });
-  closeBtn.addEventListener('click', ()=>{ resLayer.style.display='none'; });
 
-  if(!('mediaDevices' in navigator) || !('getUserMedia' in navigator.mediaDevices)){
-    statusEl.textContent='❌ 当前浏览器不支持摄像头'; startBtn.disabled=true;
-  }
 })();
 </script>
 </body>
